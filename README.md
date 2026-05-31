@@ -39,6 +39,15 @@ DoomDeck does not require root access. It works in your user folders.
 
 ## Running DoomDeck
 
+Install the latest source version directly from GitHub without PyPI:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/nledford/DoomDeck/master/install.sh | sh
+doomdeck install
+```
+
+The installer downloads the GitHub source archive, stores it under `~/.local/share/doomdeck/source`, and creates a `doomdeck` command in `~/.local/bin`.
+
 From this repo checkout, run commands through uv:
 
 ```bash
