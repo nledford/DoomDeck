@@ -36,9 +36,14 @@ just-check:
 pycompile:
     {{ uv }} run python -m compileall -q doom_deck_setup.py src tests
 
+# Check the installer shell script parses.
+[group("check")]
+installer-check:
+    sh -n install.sh
+
 # Run the standard local verification set.
 [group("check")]
-check: just-check pycompile test cli-help module-help legacy-help
+check: just-check installer-check pycompile test cli-help module-help legacy-help
 
 # Show the packaged console-script help.
 [group("cli")]
