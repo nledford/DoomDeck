@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "doomdeck"
-version = "2026.5.31"
+version = "0.1.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

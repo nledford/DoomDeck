@@ -410,6 +410,18 @@ Run the test suite with:
 uv run pytest
 ```
 
+### Versioning and Releases
+
+DoomDeck uses Semantic Versioning for package versions. The current baseline is `0.1.0`, which means the project is still before a stable `1.0.0` release.
+
+Release automation is not enabled yet. For now, use Conventional Commits so future automation can infer the next version from commit history:
+
+- `fix:` commits should become patch releases, such as `0.1.1`.
+- `feat:` commits should become minor releases, such as `0.2.0`.
+- `BREAKING CHANGE` footers or `!` markers should become major releases, such as `1.0.0`.
+
+Before creating a release tag, update `pyproject.toml` and `src/doomdeck/__init__.py` together, run `uv lock`, and verify with `uv run pytest` and `uv build --clear`.
+
 ## Legal Note
 
 You need to provide your own legally owned Doom game files. DoomDeck only copies files from your Steam installation and installs community tools or mods from their upstream locations.
