@@ -385,6 +385,22 @@ If Doom Runner already has settings you want to keep untouched:
 doomdeck install --skip-doomrunner-live-config
 ```
 
+## Development
+
+DoomDeck uses a `src/` package layout for PyPI-ready packaging:
+
+```text
+src/doomdeck/
+```
+
+The CLI orchestration lives in `doomdeck.cli`. Core domain data and managed path layout helpers live in `doomdeck.domain`, while Steam file format helpers live in `doomdeck.infrastructure`.
+
+Run the test suite with:
+
+```bash
+uv run pytest
+```
+
 ## Legal Note
 
 You need to provide your own legally owned Doom game files. DoomDeck only copies files from your Steam installation and installs community tools or mods from their upstream locations.
