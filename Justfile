@@ -91,6 +91,11 @@ package-check: build
     python3 -m zipfile -l "$(ls -1 dist/*.whl | head -n 1)"
     tar -tf "$(ls -1 dist/*.tar.gz | head -n 1)"
 
+# Print the next semantic-release version without writing files, tags, or releases.
+[group("release")]
+release-check:
+    {{ uv }} run semantic-release --noop version --print --no-push --no-vcs-release
+
 # Remove generated local artifacts.
 [group("maintenance")]
 clean:

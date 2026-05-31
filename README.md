@@ -420,6 +420,14 @@ Release automation is not enabled yet. For now, use Conventional Commits so futu
 - `feat:` commits should become minor releases, such as `0.2.0`.
 - `BREAKING CHANGE` footers or `!` markers should become major releases, such as `1.0.0`.
 
+To preview the next calculated version locally without writing files, creating tags, pushing, or publishing anything, run:
+
+```bash
+just release-check
+```
+
+Python Semantic Release calculates from Git release tags, not from the version currently written in `pyproject.toml`. The initial `v0.1.0` tag marks the release baseline, so `just release-check` reports `0.1.0` as already released until a later `fix:`, `feat:`, or breaking-change commit requires a new version.
+
 Before creating a release tag, update `pyproject.toml` and `src/doomdeck/__init__.py` together, run `uv lock`, and verify with `uv run pytest` and `uv build --clear`.
 
 ## Legal Note

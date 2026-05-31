@@ -22,9 +22,13 @@ SEMVER_PATTERN = re.compile(
 )
 
 
-def project_metadata() -> dict[str, object]:
+def pyproject_data() -> dict[str, object]:
     with (PROJECT_ROOT / "pyproject.toml").open("rb") as pyproject:
-        return tomllib.load(pyproject)["project"]
+        return tomllib.load(pyproject)
+
+
+def project_metadata() -> dict[str, object]:
+    return pyproject_data()["project"]
 
 
 class VersioningBehaviorTests(unittest.TestCase):
@@ -44,6 +48,33 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("fix:", readme)
         self.assertIn("feat:", readme)
         self.assertIn("BREAKING CHANGE", readme)
+        self.assertIn("just release-check", readme)
+
+    def test_semantic_release_is_configured_for_local_version_checks(self) -> None:
+        pyproject = pyproject_data()
+        dev_dependencies = pyproject["dependency-groups"]["dev"]
+        semantic_release = pyproject["tool"]["semantic_release"]
+
+        self.assertTrue(
+            any(dependency.startswith("python-semantic-release") for dependency in dev_dependencies)
+        )
+        self.assertTrue(semantic_release["allow_zero_version"])
+        self.assertEqual(semantic_release["commit_parser"], "conventional")
+        self.assertEqual(semantic_release["tag_format"], "v{version}")
+        self.assertEqual(semantic_release["version_toml"], ["pyproject.toml:project.version"])
+        self.assertEqual(
+            semantic_release["version_variables"],
+            ["src/doomdeck/__init__.py:__version__"],
+        )
+        self.assertTrue(semantic_release["remote"]["ignore_token_for_push"])
+        self.assertFalse(semantic_release["publish"]["upload_to_vcs_release"])
+
+    def test_justfile_exposes_a_noop_release_check(self) -> None:
+        justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+
+        self.assertIn('[group("release")]', justfile)
+        self.assertIn("release-check:", justfile)
+        self.assertIn("semantic-release --noop version --print --no-push --no-vcs-release", justfile)
 
 
 if __name__ == "__main__":
