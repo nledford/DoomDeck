@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import doomdeck
+import yaml
 
 try:
     import tomllib
@@ -29,6 +30,11 @@ def pyproject_data() -> dict[str, object]:
 
 def project_metadata() -> dict[str, object]:
     return pyproject_data()["project"]
+
+
+def release_workflow() -> dict[str, object]:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+    return yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
 class VersioningBehaviorTests(unittest.TestCase):
@@ -58,7 +64,10 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertTrue(
             any(dependency.startswith("python-semantic-release") for dependency in dev_dependencies)
         )
+        self.assertEqual(semantic_release["assets"], ["uv.lock"])
         self.assertTrue(semantic_release["allow_zero_version"])
+        self.assertEqual(semantic_release["build_command"], "uv lock && uv build --clear")
+        self.assertIn("[skip ci]", semantic_release["commit_message"])
         self.assertEqual(semantic_release["commit_parser"], "conventional")
         self.assertEqual(semantic_release["tag_format"], "v{version}")
         self.assertEqual(semantic_release["version_toml"], ["pyproject.toml:project.version"])
@@ -67,7 +76,7 @@ class VersioningBehaviorTests(unittest.TestCase):
             ["src/doomdeck/__init__.py:__version__"],
         )
         self.assertTrue(semantic_release["remote"]["ignore_token_for_push"])
-        self.assertFalse(semantic_release["publish"]["upload_to_vcs_release"])
+        self.assertTrue(semantic_release["publish"]["upload_to_vcs_release"])
 
     def test_justfile_exposes_a_noop_release_check(self) -> None:
         justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
@@ -75,6 +84,28 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn('[group("release")]', justfile)
         self.assertIn("release-check:", justfile)
         self.assertIn("semantic-release --noop version --print --no-push --no-vcs-release", justfile)
+
+    def test_github_release_workflow_runs_tests_before_publishing_release_assets(self) -> None:
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        workflow_data = release_workflow()
+
+        self.assertEqual(workflow_data["name"], "Release")
+        self.assertIn("test", workflow_data["jobs"])
+        self.assertIn("release", workflow_data["jobs"])
+        self.assertIn("push:", workflow)
+        self.assertIn('branches: ["master"]', workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("uv run pytest", workflow)
+        self.assertIn("uv build --clear", workflow)
+        self.assertIn("uv run semantic-release version", workflow)
+        self.assertIn("uv run semantic-release publish", workflow)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertIn("GIT_COMMIT_AUTHOR: github-actions[bot]", workflow)
+        self.assertNotIn("pypi", workflow.lower())
 
 
 if __name__ == "__main__":

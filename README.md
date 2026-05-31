@@ -414,7 +414,7 @@ uv run pytest
 
 DoomDeck uses Semantic Versioning for package versions. The current baseline is `0.1.0`, which means the project is still before a stable `1.0.0` release.
 
-Release automation is not enabled yet. For now, use Conventional Commits so future automation can infer the next version from commit history:
+DoomDeck's GitHub release workflow uses Conventional Commits to infer the next version from commit history:
 
 - `fix:` commits should become patch releases, such as `0.1.1`.
 - `feat:` commits should become minor releases, such as `0.2.0`.
@@ -428,7 +428,7 @@ just release-check
 
 Python Semantic Release calculates from Git release tags, not from the version currently written in `pyproject.toml`. The initial `v0.1.0` tag marks the release baseline, so `just release-check` reports `0.1.0` as already released until a later `fix:`, `feat:`, or breaking-change commit requires a new version.
 
-Before creating a release tag, update `pyproject.toml` and `src/doomdeck/__init__.py` together, run `uv lock`, and verify with `uv run pytest` and `uv build --clear`.
+When a release is needed, GitHub Actions runs the test suite, updates `pyproject.toml`, `src/doomdeck/__init__.py`, and `uv.lock`, creates a release commit and tag, builds the source distribution and wheel, and uploads those files to the GitHub Release. It does not publish to PyPI.
 
 ## Legal Note
 
