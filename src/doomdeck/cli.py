@@ -47,8 +47,17 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from doomdeck.application.wads import find_wads_in_install
 from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
+from doomdeck.domain.wads import DEFAULT_PRESET_IWADS, DOOMRUNNER_IWAD_DISPLAY_NAMES, IWAD_CANONICAL_NAMES, iwad_dest_name
+from doomdeck.infrastructure.archives import (
+    choose_payload_member,
+    common_zip_toplevel,
+    normalized_zip_member_name,
+    safe_extract_tar,
+    zip_contains_markers,
+)
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
 from doomdeck.infrastructure.steam_shortcuts import (
     get_bkv_str,
@@ -64,23 +73,6 @@ DOOMRUNNER_OPTIONS_VERSION = "1.9.2"
 DOOMRUNNER_ENGINE_ID = "doomdeck-uzdoom"
 DOOMRUNNER_ENGINE_NAME = "UZDoom"
 
-IWAD_CANONICAL_NAMES = {
-    "doom.wad": "Doom",
-    "doom1.wad": "Doom Shareware",
-    "doom2.wad": "Doom II",
-    "tnt.wad": "Final Doom: TNT Evilution",
-    "plutonia.wad": "Final Doom: The Plutonia Experiment",
-}
-
-DOOMRUNNER_IWAD_DISPLAY_NAMES = {
-    "doom.wad": "The Ultimate Doom",
-    "doom1.wad": "Doom Shareware",
-    "doom2.wad": "Doom II: Hell on Earth",
-    "tnt.wad": "Final Doom: TNT Evilution",
-    "plutonia.wad": "Final Doom: The Plutonia Experiment",
-}
-
-DEFAULT_PRESET_IWADS = ["doom2.wad", "doom.wad", "tnt.wad", "plutonia.wad", "doom1.wad"]
 MODDB_BASE_URL = "https://www.moddb.com"
 BRUTAL_DOOM_ALIAS = "brutal-doom.pk3"
 BRUTAL_DOOM_MODDB_URL = "https://www.moddb.com/mods/brutal-doom"
@@ -115,11 +107,6 @@ UZDOOM_STEAM_DECK_GLOBAL_SETTINGS = [
     ("m_blockcontrollers", "false"),
     ("use_joystick", "true"),
 ]
-
-WAD_COPY_EXCLUDES = {
-    # DOSBox and engine support archives are not playable WAD content.
-    "dosbox.wad",
-}
 
 STEAM_ROOT_CANDIDATES = [
     Path.home() / ".local" / "share" / "Steam",
@@ -396,60 +383,6 @@ def discover_steam(args: argparse.Namespace, logger: logging.Logger) -> SteamInf
     return SteamInfo(steam_root, user_id, shortcuts, libraries, app_install_dir)
 
 
-def score_iwad_candidate(path: Path) -> tuple[int, float]:
-    parts = [p.lower() for p in path.parts]
-    score = 0
-    if "rerelease" in parts:
-        score += 50
-    if "base" in parts:
-        score += 40
-    if "dosbox" in parts:
-        score += 10
-    if any(part in {"soundtrack", "music", "manual"} for part in parts):
-        score -= 100
-    try:
-        size = path.stat().st_size
-        mtime = path.stat().st_mtime
-    except OSError:
-        size = 0
-        mtime = 0.0
-    if size > 1_000_000:
-        score += 10
-    return score, mtime
-
-
-def find_wads_in_install(install_dir: Optional[Path], logger: logging.Logger) -> tuple[dict[str, Path], dict[str, Path]]:
-    found_iwads: dict[str, list[Path]] = {name: [] for name in IWAD_CANONICAL_NAMES}
-    found_pwads: dict[str, list[Path]] = {}
-    if not install_dir or not install_dir.exists():
-        return {}, {}
-    for file_path in install_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
-        name = file_path.name.lower()
-        if file_path.suffix.lower() != ".wad" or name in WAD_COPY_EXCLUDES:
-            continue
-        if name in found_iwads:
-            found_iwads[name].append(file_path)
-        else:
-            found_pwads.setdefault(name, []).append(file_path)
-
-    best: dict[str, Path] = {}
-    for name, candidates in found_iwads.items():
-        if not candidates:
-            continue
-        chosen = sorted(candidates, key=score_iwad_candidate, reverse=True)[0]
-        best[name] = chosen.resolve()
-        logger.info("Selected IWAD %s from %s", name, chosen)
-
-    extras: dict[str, Path] = {}
-    for name, candidates in found_pwads.items():
-        chosen = sorted(candidates, key=score_iwad_candidate, reverse=True)[0]
-        extras[name] = chosen.resolve()
-        logger.info("Selected add-on WAD %s from %s", name, chosen)
-    return best, extras
-
-
 def copy_wads(wads: dict[str, Path], dest_dir: Path, backups_dir: Path, dry_run: bool, logger: logging.Logger, label: str) -> None:
     for name, src in wads.items():
         dest = dest_dir / name.upper()
@@ -630,48 +563,6 @@ def install_appimage_from_github(
         raise DoomDeckError(f"Expected downloaded asset at {downloaded}")
     replace_file_safely(downloaded, target, dirs.backups, args.dry_run, logger)
     return target
-
-
-def split_zip_name(name: str) -> list[str]:
-    return [part for part in name.replace("\\", "/").split("/") if part not in {"", "."}]
-
-
-def common_zip_toplevel(names: Iterable[str]) -> Optional[str]:
-    split_names = [split_zip_name(name) for name in names]
-    split_names = [parts for parts in split_names if parts]
-    if not split_names:
-        return None
-    candidate = split_names[0][0]
-    if all(len(parts) > 1 and parts[0] == candidate for parts in split_names):
-        return candidate
-    return None
-
-
-def normalized_zip_member_name(raw_name: str, prefix: Optional[str]) -> Optional[str]:
-    parts = split_zip_name(raw_name)
-    if not parts or any(part == ".." for part in parts):
-        return None
-    if prefix and parts[0] == prefix:
-        parts = parts[1:]
-    if not parts:
-        return None
-    return "/".join(parts)
-
-
-def zip_contains_markers(path: Path, markers: set[str]) -> bool:
-    if not path.exists() or not zipfile.is_zipfile(path):
-        return False
-    try:
-        with zipfile.ZipFile(path) as archive:
-            names = [info.filename for info in archive.infolist() if not info.is_dir()]
-            prefix = common_zip_toplevel(names)
-            normalized = {
-                (normalized_zip_member_name(name, prefix) or "").lower()
-                for name in names
-            }
-    except (OSError, zipfile.BadZipFile):
-        return False
-    return markers.issubset(normalized)
 
 
 def metadata_matches(metadata_path: Path, expected: dict[str, str], keys: Iterable[str]) -> bool:
@@ -1031,29 +922,6 @@ def select_brutal_doom_download(channel: str, logger: logging.Logger) -> ModDBDo
         )
 
     raise DoomDeckError(f"Could not find a suitable Brutal Doom ModDB download for channel '{channel}'")
-
-
-def choose_payload_member(infos: list[zipfile.ZipInfo]) -> Optional[zipfile.ZipInfo]:
-    payloads = [info for info in infos if Path(info.filename).suffix.lower() in {".pk3", ".wad"}]
-    if not payloads:
-        return None
-
-    def score(info: zipfile.ZipInfo) -> int:
-        name = info.filename.replace("\\", "/").split("/")[-1].lower()
-        value = 0
-        if name.endswith(".pk3"):
-            value += 100
-        if name.endswith(".wad"):
-            value += 60
-        if "brutal" in name:
-            value += 50
-        if "bd" in name:
-            value += 10
-        if any(token in name for token in ["readme", "manual", "credits", "optional", "extras"]):
-            value -= 100
-        return value
-
-    return sorted(payloads, key=score, reverse=True)[0]
 
 
 def install_brutal_doom_archive(
@@ -1440,10 +1308,6 @@ def create_or_replace_symlink_or_copy(src: Path, dest: Path, dry_run: bool, logg
 
 def launcher_slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
-
-
-def iwad_dest_name(iwad_lower_name: str) -> str:
-    return iwad_lower_name.upper()
 
 
 def choose_default_preset_iwad(dirs: Dirs) -> Optional[Path]:
@@ -2524,15 +2388,6 @@ def restore(args: argparse.Namespace) -> int:
         safe_extract_tar(tar, dirs.root.parent)
     logger.info("Restore completed from %s", archive)
     return 0
-
-
-def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
-    dest = dest.resolve()
-    for member in tar.getmembers():
-        member_path = (dest / member.name).resolve()
-        if not str(member_path).startswith(str(dest) + os.sep):
-            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
-    tar.extractall(dest)
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:

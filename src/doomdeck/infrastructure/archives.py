@@ -1,0 +1,84 @@
+"""Archive handling helpers used by DoomDeck installers and backups."""
+from __future__ import annotations
+
+import os
+import tarfile
+import zipfile
+from pathlib import Path
+from typing import Iterable, Optional
+
+from doomdeck.domain.models import DoomDeckError
+
+
+def split_zip_name(name: str) -> list[str]:
+    return [part for part in name.replace("\\", "/").split("/") if part not in {"", "."}]
+
+
+def common_zip_toplevel(names: Iterable[str]) -> Optional[str]:
+    split_names = [split_zip_name(name) for name in names]
+    split_names = [parts for parts in split_names if parts]
+    if not split_names:
+        return None
+    candidate = split_names[0][0]
+    if all(len(parts) > 1 and parts[0] == candidate for parts in split_names):
+        return candidate
+    return None
+
+
+def normalized_zip_member_name(raw_name: str, prefix: Optional[str]) -> Optional[str]:
+    parts = split_zip_name(raw_name)
+    if not parts or any(part == ".." for part in parts):
+        return None
+    if prefix and parts[0] == prefix:
+        parts = parts[1:]
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
+def zip_contains_markers(path: Path, markers: set[str]) -> bool:
+    if not path.exists() or not zipfile.is_zipfile(path):
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = [info.filename for info in archive.infolist() if not info.is_dir()]
+            prefix = common_zip_toplevel(names)
+            normalized = {
+                (normalized_zip_member_name(name, prefix) or "").lower()
+                for name in names
+            }
+    except (OSError, zipfile.BadZipFile):
+        return False
+    return markers.issubset(normalized)
+
+
+def choose_payload_member(infos: list[zipfile.ZipInfo]) -> Optional[zipfile.ZipInfo]:
+    payloads = [info for info in infos if Path(info.filename).suffix.lower() in {".pk3", ".wad"}]
+    if not payloads:
+        return None
+
+    def score(info: zipfile.ZipInfo) -> int:
+        name = info.filename.replace("\\", "/").split("/")[-1].lower()
+        value = 0
+        if name.endswith(".pk3"):
+            value += 100
+        if name.endswith(".wad"):
+            value += 60
+        if "brutal" in name:
+            value += 50
+        if "bd" in name:
+            value += 10
+        if any(token in name for token in ["readme", "manual", "credits", "optional", "extras"]):
+            value -= 100
+        return value
+
+    return sorted(payloads, key=score, reverse=True)[0]
+
+
+def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
+    dest = dest.resolve()
+    for member in tar.getmembers():
+        member_path = (dest / member.name).resolve()
+        if not str(member_path).startswith(str(dest) + os.sep):
+            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
+    tar.extractall(dest)
