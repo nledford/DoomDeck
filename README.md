@@ -393,7 +393,7 @@ DoomDeck uses a `src/` package layout for PyPI-ready packaging:
 src/doomdeck/
 ```
 
-The CLI orchestration lives in `doomdeck.cli`. Core domain data and managed path layout helpers live in `doomdeck.domain`, while Steam file format helpers live in `doomdeck.infrastructure`.
+The CLI orchestration lives in `doomdeck.cli`. Core domain data, WAD naming policy, and managed path layout helpers live in `doomdeck.domain`. Application services such as WAD discovery live in `doomdeck.application`, while Steam and archive file format helpers live in `doomdeck.infrastructure`.
 
 Run the test suite with:
 
