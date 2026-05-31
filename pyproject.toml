@@ -1,0 +1,50 @@
+[project]
+name = "doomdeck"
+version = "2026.5.31"
+description = "Steam Deck Doom modding setup automation for Doom Runner, UZDoom, Brutal Doom, and Project Brutality."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Nathaniel Ledford", email = "nate@nateledford.com" },
+]
+keywords = [
+    "appimage",
+    "brutal-doom",
+    "doom",
+    "doom-runner",
+    "game-modding",
+    "linux-gaming",
+    "project-brutality",
+    "steam-deck",
+    "uzdoom",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+    "Topic :: System :: Installation/Setup",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/nledford/DoomDeck"
+Repository = "https://github.com/nledford/DoomDeck"
+Issues = "https://github.com/nledford/DoomDeck/issues"
+
+[project.scripts]
+doomdeck = "doomdeck.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.17,<0.12.0"]
+build-backend = "uv_build"
