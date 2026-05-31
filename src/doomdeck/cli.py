@@ -82,6 +82,7 @@ BRUTAL_DOOM_MODDB_URL = "https://www.moddb.com/mods/brutal-doom"
 BRUTAL_DOOM_DOWNLOADS_URL = "https://www.moddb.com/mods/brutal-doom/downloads"
 PROJECT_BRUTALITY_REPO = "pa1nki113r/Project_Brutality"
 PROJECT_BRUTALITY_ALIAS = "project-brutality.pk3"
+MODDB_WAD_PAYLOAD_SUFFIXES = {".wad", ".pk3"}
 UZDOOM_STEAM_DECK_GLOBAL_SETTINGS = [
     ("vid_fullscreen", "true"),
     ("vid_defwidth", str(STEAM_DECK_WIDTH)),
@@ -194,6 +195,14 @@ def script_has_execve_shebang(path: Path) -> bool:
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def md5_file(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -764,12 +773,12 @@ def line_after_label(lines: list[str], label: str) -> str:
 
 def extract_moddb_download_link(page_html: str, page_url: str) -> str:
     for href, text in html_links(page_html):
-        if "/downloads/start/" in href and "download" in text.lower():
+        if re.search(r"/(?:downloads|addons)/start/", href) and "download" in text.lower():
             return absolute_moddb_url(href, page_url)
     for href, _text in html_links(page_html):
-        if "/downloads/start/" in href:
+        if re.search(r"/(?:downloads|addons)/start/", href):
             return absolute_moddb_url(href, page_url)
-    match = re.search(r"""(?i)href\s*=\s*["'](?P<href>[^"']*/downloads/start/\d+[^"']*)["']""", page_html)
+    match = re.search(r"""(?i)href\s*=\s*["'](?P<href>[^"']*/(?:downloads|addons)/start/\d+[^"']*)["']""", page_html)
     if match:
         return absolute_moddb_url(match.group("href"), page_url)
     raise DoomDeckError(f"Could not find a ModDB start-download link on {page_url}")
@@ -778,7 +787,7 @@ def extract_moddb_download_link(page_html: str, page_url: str) -> str:
 def resolve_moddb_download_url(start_url: str, page_url: str, logger: logging.Logger) -> str:
     def first_mirror(html_text: str, base_url: str) -> Optional[str]:
         for href, _text in html_links(html_text):
-            if "/downloads/mirror/" in href:
+            if re.search(r"/(?:downloads|addons)/mirror/", href):
                 return absolute_moddb_url(href, base_url)
         return None
 
@@ -921,6 +930,129 @@ def select_brutal_doom_download(channel: str, logger: logging.Logger) -> ModDBDo
         )
 
     raise DoomDeckError(f"Could not find a suitable Brutal Doom ModDB download for channel '{channel}'")
+
+
+def select_moddb_wad_download(page_url: str, logger: logging.Logger) -> ModDBDownload:
+    parsed = urllib.parse.urlparse(page_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc.endswith("moddb.com"):
+        raise DoomDeckError(f"--moddb-wad-url must be a ModDB URL, got: {page_url}")
+
+    try:
+        page_html = fetch_text_url(page_url, logger)
+    except urllib.error.URLError as exc:
+        raise DoomDeckError(f"Could not read ModDB page {page_url}: {exc}") from exc
+
+    lines = html_text_lines(page_html)
+    title = next((line for line in lines if line.lower() not in {"hello guest", "description"}), page_url)
+    filename = line_after_label(lines, "Filename") or safe_download_name(page_url, "moddb-wad.zip")
+    updated = line_after_label(lines, "Updated")
+    md5 = line_after_label(lines, "MD5 Hash")
+    start_url = extract_moddb_download_link(page_html, page_url)
+    return ModDBDownload(
+        title=title,
+        page_url=page_url,
+        filename=safe_download_name(filename, "moddb-wad.zip"),
+        download_url=resolve_moddb_download_url(start_url, page_url, logger),
+        updated=updated,
+        md5=md5,
+    )
+
+
+def install_moddb_wad_archive(
+    src: Path,
+    dest_dir: Path,
+    backups_dir: Path,
+    dry_run: bool,
+    logger: logging.Logger,
+) -> list[Path]:
+    if not src.exists() and not dry_run:
+        raise DoomDeckError(f"ModDB WAD download is missing: {src}")
+
+    def install_payload(payload_name: str, write_payload: Any) -> Optional[Path]:
+        dest = dest_dir / Path(payload_name).name.upper()
+        logger.info("Install ModDB WAD payload: %s -> %s", payload_name, dest)
+        if dry_run:
+            return dest
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            with tmp.open("wb") as handle:
+                write_payload(handle)
+            if dest.exists() and files_equal(tmp, dest):
+                tmp.unlink()
+                logger.info("ModDB WAD payload already installed: %s", dest)
+                return dest
+            if dest.exists():
+                backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
+            tmp.replace(dest)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        return dest
+
+    if src.suffix.lower() in MODDB_WAD_PAYLOAD_SUFFIXES:
+        def copy_direct_payload(handle: Any) -> None:
+            with src.open("rb") as source_handle:
+                shutil.copyfileobj(source_handle, handle)
+
+        installed = install_payload(src.name, copy_direct_payload)
+        return [installed] if installed else []
+
+    if not zipfile.is_zipfile(src):
+        raise DoomDeckError(f"ModDB WAD file should be a .wad/.pk3/.zip, got: {src}")
+
+    installed: list[Path] = []
+    with zipfile.ZipFile(src) as source_zip:
+        infos = [info for info in source_zip.infolist() if not info.is_dir()]
+        prefix = common_zip_toplevel(info.filename for info in infos)
+        payload_infos: list[tuple[zipfile.ZipInfo, str]] = []
+        for info in infos:
+            raw_suffix = Path(info.filename).suffix.lower()
+            if raw_suffix not in MODDB_WAD_PAYLOAD_SUFFIXES:
+                continue
+            normalized = normalized_zip_member_name(info.filename, prefix)
+            if normalized is None:
+                raise DoomDeckError(f"Unsafe path in ModDB WAD archive: {info.filename}")
+            payload_infos.append((info, normalized))
+        if not payload_infos:
+            raise DoomDeckError(f"ModDB WAD archive has no .wad/.pk3 payload: {src}")
+        for info, normalized in payload_infos:
+            def copy_zip_payload(handle: Any, member: zipfile.ZipInfo = info) -> None:
+                with source_zip.open(member) as source_handle:
+                    shutil.copyfileobj(source_handle, handle)
+
+            installed_path = install_payload(
+                normalized,
+                copy_zip_payload,
+            )
+            if installed_path:
+                installed.append(installed_path)
+    return installed
+
+
+def install_moddb_wad_urls(args: argparse.Namespace, dirs: Dirs, dry_run: bool, logger: logging.Logger) -> list[Path]:
+    installed: list[Path] = []
+    for page_url in getattr(args, "moddb_wad_urls", []) or []:
+        selected = select_moddb_wad_download(page_url, logger)
+        download_dest = dirs.downloads / selected.filename
+        downloaded = download_url(
+            selected.download_url,
+            download_dest,
+            dry_run,
+            logger,
+            force=args.force_download,
+            headers={"Referer": selected.page_url},
+        )
+        if selected.md5 and downloaded.exists():
+            actual_md5 = md5_file(downloaded)
+            if actual_md5.lower() != selected.md5.lower():
+                raise DoomDeckError(
+                    f"ModDB WAD download checksum mismatch for {selected.filename}: "
+                    f"expected {selected.md5}, got {actual_md5}"
+                )
+        installed.extend(install_moddb_wad_archive(downloaded, dirs.pwads, dirs.backups, dry_run, logger))
+    return installed
 
 
 def install_brutal_doom_archive(
@@ -1600,7 +1732,13 @@ Doom Runner should open with the generated UZDoom engine, IWADs, and presets alr
 
    `{dirs.iwads}`
 
-4. Confirm these presets are listed:
+4. Confirm the map directory is:
+
+   `{dirs.pwads}`
+
+   ModDB WAD archives installed with `--moddb-wad-url` are extracted here so they can be selected inside a preset.
+
+5. Confirm these presets are listed:
 
 """
     for preset in manifest.get("presets", []):
@@ -1795,6 +1933,8 @@ def install(args: argparse.Namespace) -> int:
         "Check/update Project Brutality from GitHub and add a Doom Runner preset",
         "Generate Doom Runner live options.json, setup guide, and stable preset manifest",
     ]
+    if args.moddb_wad_urls:
+        actions.append("Download requested ModDB WAD archives into the PWAD map directory")
     if not args.skip_steam_shortcut:
         actions.append(f"Add/update Steam non-Steam shortcut for Doom Runner at {steam.shortcuts_vdf if steam.shortcuts_vdf else 'unknown shortcuts.vdf'}")
     print_plan("Planned install actions", actions)
@@ -1835,6 +1975,10 @@ def install(args: argparse.Namespace) -> int:
             logger.warning("No add-on WADs found under %s", steam.app_install_dir)
     else:
         logger.warning("Steam app %s not found. Install DOOM + DOOM II in Steam, then rerun install.", APPID_DOOM_PLUS_DOOM_II)
+
+    moddb_wads = install_moddb_wad_urls(args, dirs, args.dry_run, logger)
+    if moddb_wads:
+        logger.info("Installed ModDB WAD payloads: %s", ", ".join(str(path) for path in moddb_wads))
 
     brutal_path = resolve_brutal_doom(args, dirs, args.dry_run, logger)
     if brutal_path:
@@ -2212,6 +2356,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     install_parser.add_argument("--brutal-doom-file", help="Path to a manually downloaded Brutal Doom .pk3/.wad/.zip")
     install_parser.add_argument("--project-brutality-file", help="Path to a manually downloaded Project Brutality .pk3/.wad/.zip")
+    install_parser.add_argument(
+        "--moddb-wad-url",
+        action="append",
+        default=[],
+        dest="moddb_wad_urls",
+        help="ModDB add-on/file page to download and extract .wad/.pk3 map payloads into pwads/; repeat to install multiple archives",
+    )
     install_parser.add_argument("--skip-brutal-doom", action="store_true", help="Do not download, update, or install Brutal Doom")
     install_parser.add_argument("--skip-project-brutality", action="store_true", help="Do not download or install Project Brutality")
     install_parser.add_argument("--skip-steam-shortcut", action="store_true", help="Do not modify Steam shortcuts.vdf")

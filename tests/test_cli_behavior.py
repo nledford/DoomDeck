@@ -14,6 +14,25 @@ class CLIBehaviorTests(unittest.TestCase):
         self.assertFalse(args.skip_downloads)
         self.assertTrue(callable(args.func))
 
+    def test_install_parser_accepts_repeatable_moddb_wad_urls(self) -> None:
+        args = build_arg_parser().parse_args(
+            [
+                "install",
+                "--moddb-wad-url",
+                "https://www.moddb.com/games/doom/addons/doom-the-way-id-did-v11",
+                "--moddb-wad-url",
+                "https://www.moddb.com/games/doom-ii/addons/doom-2-the-way-id-did",
+            ]
+        )
+
+        self.assertEqual(
+            args.moddb_wad_urls,
+            [
+                "https://www.moddb.com/games/doom/addons/doom-the-way-id-did-v11",
+                "https://www.moddb.com/games/doom-ii/addons/doom-2-the-way-id-did",
+            ],
+        )
+
     def test_parser_exposes_maintenance_commands(self) -> None:
         parser = build_arg_parser()
 
