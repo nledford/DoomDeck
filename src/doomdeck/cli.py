@@ -23,7 +23,6 @@ Tested for syntax on Python 3.11. Should work on Python 3.10+.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import datetime as _dt
 import fnmatch
 import hashlib
@@ -35,7 +34,6 @@ import platform
 import re
 import shutil
 import stat
-import struct
 import subprocess
 import sys
 import tarfile
@@ -44,11 +42,20 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zlib
 import zipfile
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable, Optional
+
+from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem
+from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
+from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
+from doomdeck.infrastructure.steam_shortcuts import (
+    get_bkv_str,
+    load_shortcuts,
+    make_shortcut_entry,
+    steam_quote_path,
+)
 
 APPID_DOOM_PLUS_DOOM_II = "2280"
 DEFAULT_ROOT = Path.home() / "Games" / "Doom"
@@ -123,242 +130,9 @@ STEAM_ROOT_CANDIDATES = [
 
 GITHUB_USER_AGENT = f"doomdeck/{SCRIPT_VERSION}"
 
-# Binary VDF value type bytes used by Steam shortcuts.vdf.
-BKV_OBJECT = 0x00
-BKV_STRING = 0x01
-BKV_INT32 = 0x02
-BKV_FLOAT32 = 0x03
-BKV_UINT64 = 0x07
-BKV_END = 0x08
-
-
-class DoomDeckError(RuntimeError):
-    """A predictable setup/validation error with a human-actionable message."""
-
-
-@dataclasses.dataclass
-class Dirs:
-    root: Path
-    tools: Path
-    doomrunner: Path
-    ports: Path
-    uzdoom: Path
-    iwads: Path
-    pwads: Path
-    mods: Path
-    brutal: Path
-    project_brutality: Path
-    configs: Path
-    xdg_config: Path
-    xdg_data: Path
-    doomrunner_config: Path
-    uzdoom_config: Path
-    launchers: Path
-    saves: Path
-    screenshots: Path
-    logs: Path
-    backups: Path
-    downloads: Path
-    docs: Path
-
-
-@dataclasses.dataclass
-class SteamInfo:
-    steam_root: Optional[Path]
-    user_id: Optional[str]
-    shortcuts_vdf: Optional[Path]
-    library_folders: list[Path]
-    app_install_dir: Optional[Path]
-
-
-@dataclasses.dataclass
-class GitHubAsset:
-    name: str
-    url: str
-    size: Optional[int]
-    tag_name: str
-
-
-@dataclasses.dataclass
-class ModDBDownload:
-    title: str
-    page_url: str
-    filename: str
-    download_url: str
-    updated: str
-    md5: str
-
-
-@dataclasses.dataclass
-class ValidationItem:
-    level: str  # PASS, WARN, FAIL
-    message: str
-
-
-@dataclasses.dataclass
-class BKVValue:
-    type_code: int
-    value: Any
-
-
-class BinaryVDF:
-    """Minimal binary KeyValues reader/writer for Steam shortcuts.vdf.
-
-    This intentionally supports only the value types normally seen in
-    shortcuts.vdf and fails closed on unknown types so the script will not
-    silently corrupt a user's Steam shortcut database.
-    """
-
-    def __init__(self, data: bytes = b"") -> None:
-        self.data = data
-        self.offset = 0
-
-    @staticmethod
-    def loads(data: bytes) -> OrderedDict[str, BKVValue]:
-        parser = BinaryVDF(data)
-        root = parser._read_object(implicit_root=True)
-        return root
-
-    @staticmethod
-    def dumps(root: OrderedDict[str, BKVValue]) -> bytes:
-        out = bytearray()
-        for key, value in root.items():
-            BinaryVDF._write_entry(out, key, value)
-        out.append(BKV_END)
-        return bytes(out)
-
-    def _read_cstring(self) -> str:
-        try:
-            end = self.data.index(b"\x00", self.offset)
-        except ValueError as exc:
-            raise DoomDeckError("Invalid binary VDF: unterminated string") from exc
-        raw = self.data[self.offset : end]
-        self.offset = end + 1
-        return raw.decode("utf-8", errors="replace")
-
-    def _read_object(self, implicit_root: bool = False) -> OrderedDict[str, BKVValue]:
-        obj: OrderedDict[str, BKVValue] = OrderedDict()
-        while self.offset < len(self.data):
-            type_code = self.data[self.offset]
-            self.offset += 1
-            if type_code == BKV_END:
-                break
-
-            key = self._read_cstring()
-
-            if type_code == BKV_OBJECT:
-                obj[key] = BKVValue(type_code, self._read_object())
-            elif type_code == BKV_STRING:
-                obj[key] = BKVValue(type_code, self._read_cstring())
-            elif type_code == BKV_INT32:
-                self._require_bytes(4)
-                obj[key] = BKVValue(type_code, struct.unpack_from("<i", self.data, self.offset)[0])
-                self.offset += 4
-            elif type_code == BKV_FLOAT32:
-                self._require_bytes(4)
-                obj[key] = BKVValue(type_code, struct.unpack_from("<f", self.data, self.offset)[0])
-                self.offset += 4
-            elif type_code == BKV_UINT64:
-                self._require_bytes(8)
-                obj[key] = BKVValue(type_code, struct.unpack_from("<Q", self.data, self.offset)[0])
-                self.offset += 8
-            else:
-                scope = "top-level" if implicit_root else "nested"
-                raise DoomDeckError(
-                    f"Unsupported binary VDF type byte 0x{type_code:02x} in {scope} object near offset {self.offset - 1}. "
-                    "Not modifying shortcuts.vdf."
-                )
-        return obj
-
-    def _require_bytes(self, count: int) -> None:
-        if self.offset + count > len(self.data):
-            raise DoomDeckError("Invalid binary VDF: truncated scalar value")
-
-    @staticmethod
-    def _write_cstring(out: bytearray, text: str) -> None:
-        out.extend(text.encode("utf-8"))
-        out.append(0)
-
-    @staticmethod
-    def _write_entry(out: bytearray, key: str, value: BKVValue) -> None:
-        out.append(value.type_code)
-        BinaryVDF._write_cstring(out, key)
-        if value.type_code == BKV_OBJECT:
-            for child_key, child_value in value.value.items():
-                BinaryVDF._write_entry(out, child_key, child_value)
-            out.append(BKV_END)
-        elif value.type_code == BKV_STRING:
-            BinaryVDF._write_cstring(out, str(value.value))
-        elif value.type_code == BKV_INT32:
-            out.extend(struct.pack("<i", int(value.value)))
-        elif value.type_code == BKV_FLOAT32:
-            out.extend(struct.pack("<f", float(value.value)))
-        elif value.type_code == BKV_UINT64:
-            out.extend(struct.pack("<Q", int(value.value)))
-        else:
-            raise DoomDeckError(f"Cannot write unsupported binary VDF type 0x{value.type_code:02x}")
-
 
 def now_stamp() -> str:
     return _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
-def expand_path(value: str | Path) -> Path:
-    return Path(value).expanduser().resolve()
-
-
-def build_dirs(root: Path) -> Dirs:
-    return Dirs(
-        root=root,
-        tools=root / "tools",
-        doomrunner=root / "tools" / "doomrunner",
-        ports=root / "source-ports",
-        uzdoom=root / "source-ports" / "uzdoom",
-        iwads=root / "iwads",
-        pwads=root / "pwads",
-        mods=root / "mods",
-        brutal=root / "mods" / "brutal-doom",
-        project_brutality=root / "mods" / "project-brutality",
-        configs=root / "configs",
-        xdg_config=root / "configs" / "xdg-config",
-        xdg_data=root / "configs" / "xdg-data",
-        doomrunner_config=root / "configs" / "doomrunner",
-        uzdoom_config=root / "configs" / "uzdoom",
-        launchers=root / "launchers",
-        saves=root / "saves",
-        screenshots=root / "screenshots",
-        logs=root / "logs",
-        backups=root / "backups",
-        downloads=root / "downloads",
-        docs=root / "docs",
-    )
-
-
-def all_managed_dirs(dirs: Dirs) -> list[Path]:
-    return [
-        dirs.root,
-        dirs.tools,
-        dirs.doomrunner,
-        dirs.ports,
-        dirs.uzdoom,
-        dirs.iwads,
-        dirs.pwads,
-        dirs.mods,
-        dirs.brutal,
-        dirs.project_brutality,
-        dirs.configs,
-        dirs.xdg_config,
-        dirs.xdg_data,
-        dirs.doomrunner_config,
-        dirs.uzdoom_config,
-        dirs.launchers,
-        dirs.saves,
-        dirs.screenshots,
-        dirs.logs,
-        dirs.backups,
-        dirs.downloads,
-        dirs.docs,
-    ]
 
 
 def configure_logging(dirs: Dirs, verbose: bool, dry_run: bool) -> logging.Logger:
@@ -2280,64 +2054,6 @@ def shutdown_steam(logger: logging.Logger, dry_run: bool) -> None:
             time.sleep(8)
             return
     logger.warning("Steam command not found; close Steam manually before modifying shortcuts.vdf")
-
-
-def steam_quote_path(path: Path) -> str:
-    return f'"{path}"'
-
-
-def generate_shortcut_appid(exe_value: str, appname: str) -> int:
-    # Stable non-Steam shortcut appid. Steam stores this as int32 in shortcuts.vdf.
-    unsigned = (zlib.crc32(f"{exe_value}{appname}".encode("utf-8")) | 0x80000000) & 0xFFFFFFFF
-    return unsigned - 0x100000000 if unsigned >= 0x80000000 else unsigned
-
-
-def load_shortcuts(path: Path) -> OrderedDict[str, BKVValue]:
-    if not path.exists():
-        return OrderedDict({"shortcuts": BKVValue(BKV_OBJECT, OrderedDict())})
-    data = path.read_bytes()
-    if not data:
-        return OrderedDict({"shortcuts": BKVValue(BKV_OBJECT, OrderedDict())})
-    parsed = BinaryVDF.loads(data)
-    if "shortcuts" not in parsed or parsed["shortcuts"].type_code != BKV_OBJECT:
-        raise DoomDeckError("shortcuts.vdf does not contain a top-level shortcuts object")
-    return parsed
-
-
-def get_bkv_str(obj: OrderedDict[str, BKVValue], *names: str) -> str:
-    lower_map = {key.lower(): key for key in obj.keys()}
-    for name in names:
-        key = name if name in obj else lower_map.get(name.lower())
-        if key and obj[key].type_code == BKV_STRING:
-            return str(obj[key].value)
-    return ""
-
-
-def make_shortcut_entry(appname: str, exe: Path, start_dir: Path, tags: list[str]) -> BKVValue:
-    exe_value = steam_quote_path(exe)
-    start_dir_value = steam_quote_path(start_dir)
-    fields: OrderedDict[str, BKVValue] = OrderedDict()
-    fields["appid"] = BKVValue(BKV_INT32, generate_shortcut_appid(exe_value, appname))
-    fields["appname"] = BKVValue(BKV_STRING, appname)
-    fields["exe"] = BKVValue(BKV_STRING, exe_value)
-    fields["StartDir"] = BKVValue(BKV_STRING, start_dir_value)
-    fields["icon"] = BKVValue(BKV_STRING, "")
-    fields["ShortcutPath"] = BKVValue(BKV_STRING, "")
-    fields["LaunchOptions"] = BKVValue(BKV_STRING, "")
-    fields["IsHidden"] = BKVValue(BKV_INT32, 0)
-    fields["AllowDesktopConfig"] = BKVValue(BKV_INT32, 1)
-    fields["AllowOverlay"] = BKVValue(BKV_INT32, 1)
-    fields["OpenVR"] = BKVValue(BKV_INT32, 0)
-    fields["Devkit"] = BKVValue(BKV_INT32, 0)
-    fields["DevkitGameID"] = BKVValue(BKV_STRING, "")
-    fields["DevkitOverrideAppID"] = BKVValue(BKV_INT32, 0)
-    fields["LastPlayTime"] = BKVValue(BKV_INT32, 0)
-    fields["FlatpakAppID"] = BKVValue(BKV_STRING, "")
-    tag_obj: OrderedDict[str, BKVValue] = OrderedDict()
-    for idx, tag in enumerate(tags):
-        tag_obj[str(idx)] = BKVValue(BKV_STRING, tag)
-    fields["tags"] = BKVValue(BKV_OBJECT, tag_obj)
-    return BKVValue(BKV_OBJECT, fields)
 
 
 def add_or_update_steam_shortcut(
