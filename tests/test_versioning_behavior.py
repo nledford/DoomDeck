@@ -75,15 +75,32 @@ class VersioningBehaviorTests(unittest.TestCase):
             semantic_release["version_variables"],
             ["src/doomdeck/__init__.py:__version__"],
         )
+        self.assertEqual(
+            semantic_release["changelog"]["insertion_flag"],
+            "<!-- version list -->",
+        )
+        self.assertEqual(
+            semantic_release["changelog"]["default_templates"]["changelog_file"],
+            "CHANGELOG.md",
+        )
         self.assertTrue(semantic_release["remote"]["ignore_token_for_push"])
         self.assertTrue(semantic_release["publish"]["upload_to_vcs_release"])
 
-    def test_justfile_exposes_a_noop_release_check(self) -> None:
+    def test_justfile_exposes_noop_release_commands(self) -> None:
         justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
 
         self.assertIn('[group("release")]', justfile)
         self.assertIn("release-check:", justfile)
         self.assertIn("semantic-release --noop version --print --no-push --no-vcs-release", justfile)
+        self.assertIn("release-dry-run:", justfile)
+        self.assertIn("semantic-release --noop version --no-push --no-vcs-release", justfile)
+
+    def test_changelog_is_ready_for_semantic_release_updates(self) -> None:
+        changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+        self.assertIn("# Changelog", changelog)
+        self.assertIn("<!-- version list -->", changelog)
+        self.assertIn("## v0.1.0", changelog)
 
     def test_github_release_workflow_runs_tests_before_publishing_release_assets(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text(

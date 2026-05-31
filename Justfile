@@ -96,6 +96,11 @@ package-check: build
 release-check:
     {{ uv }} run semantic-release --noop version --print --no-push --no-vcs-release
 
+# Preview semantic-release changelog, version, commit, tag, and build actions.
+[group("release")]
+release-dry-run:
+    {{ uv }} run semantic-release --noop version --no-push --no-vcs-release
+
 # Remove generated local artifacts.
 [group("maintenance")]
 clean:
