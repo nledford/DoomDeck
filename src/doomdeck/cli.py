@@ -47,10 +47,16 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from doomdeck.application.doomrunner import (
+    DOOMRUNNER_ENGINE_ID,
+    build_doomrunner_options,
+    doomrunner_options_paths,
+)
 from doomdeck.application.wads import find_wads_in_install
+from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
 from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
-from doomdeck.domain.wads import DEFAULT_PRESET_IWADS, DOOMRUNNER_IWAD_DISPLAY_NAMES, IWAD_CANONICAL_NAMES, iwad_dest_name
+from doomdeck.domain.wads import DEFAULT_PRESET_IWADS, IWAD_CANONICAL_NAMES, iwad_dest_name
 from doomdeck.infrastructure.archives import (
     choose_payload_member,
     common_zip_toplevel,
@@ -69,9 +75,6 @@ from doomdeck.infrastructure.steam_shortcuts import (
 APPID_DOOM_PLUS_DOOM_II = "2280"
 DEFAULT_ROOT = Path.home() / "Games" / "Doom"
 SCRIPT_VERSION = "2026.05.31"
-DOOMRUNNER_OPTIONS_VERSION = "1.9.2"
-DOOMRUNNER_ENGINE_ID = "doomdeck-uzdoom"
-DOOMRUNNER_ENGINE_NAME = "UZDoom"
 
 MODDB_BASE_URL = "https://www.moddb.com"
 BRUTAL_DOOM_ALIAS = "brutal-doom.pk3"
@@ -79,10 +82,6 @@ BRUTAL_DOOM_MODDB_URL = "https://www.moddb.com/mods/brutal-doom"
 BRUTAL_DOOM_DOWNLOADS_URL = "https://www.moddb.com/mods/brutal-doom/downloads"
 PROJECT_BRUTALITY_REPO = "pa1nki113r/Project_Brutality"
 PROJECT_BRUTALITY_ALIAS = "project-brutality.pk3"
-STEAM_DECK_WIDTH = 1280
-STEAM_DECK_HEIGHT = 800
-STEAM_DECK_TARGET_FPS = 60
-
 UZDOOM_STEAM_DECK_GLOBAL_SETTINGS = [
     ("vid_fullscreen", "true"),
     ("vid_defwidth", str(STEAM_DECK_WIDTH)),
@@ -1306,10 +1305,6 @@ def create_or_replace_symlink_or_copy(src: Path, dest: Path, dry_run: bool, logg
         shutil.copy2(src, dest)
 
 
-def launcher_slug(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
-
-
 def choose_default_preset_iwad(dirs: Dirs) -> Optional[Path]:
     for iwad_name in DEFAULT_PRESET_IWADS:
         iwad_path = dirs.iwads / iwad_dest_name(iwad_name)
@@ -1472,211 +1467,6 @@ fi
     manifest_path = dirs.doomrunner_config / "preset-manifest.json"
     atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n", dry_run, logger)
     return manifest
-
-
-def doomrunner_options_paths(dirs: Dirs) -> list[Path]:
-    # Doom Runner stores options in QStandardPaths::AppDataLocation on Linux,
-    # which honors XDG_DATA_HOME. The config mirror covers older/future builds
-    # that may use XDG_CONFIG_HOME instead.
-    return [
-        dirs.xdg_data / "DoomRunner" / "options.json",
-        dirs.xdg_config / "DoomRunner" / "options.json",
-    ]
-
-
-def doomrunner_quote_arg(value: str | Path) -> str:
-    return '"' + str(value).replace('"', '\\"') + '"'
-
-
-def build_doomrunner_iwad_entries(dirs: Dirs) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
-    for iwad_name, display_name in DOOMRUNNER_IWAD_DISPLAY_NAMES.items():
-        iwad_path = dirs.iwads / iwad_dest_name(iwad_name)
-        if iwad_path.exists():
-            entries.append({"name": display_name, "path": str(iwad_path)})
-    return entries
-
-
-def choose_doomrunner_default_iwad(iwad_entries: list[dict[str, str]], dirs: Dirs) -> str:
-    preferred = dirs.iwads / "DOOM2.WAD"
-    for entry in iwad_entries:
-        if entry["path"] == str(preferred):
-            return entry["path"]
-    return iwad_entries[0]["path"] if iwad_entries else ""
-
-
-def build_doomrunner_preset(dirs: Dirs, preset: dict[str, Any]) -> dict[str, Any]:
-    name = str(preset["name"])
-    slug = launcher_slug(name).lower()
-    config = Path(preset["config"])
-    autoexec = Path(preset["autoexec"])
-    save_dir = dirs.saves / slug
-    screenshot_dir = dirs.screenshots / slug
-    mods = [{"path": str(path), "checked": True} for path in preset.get("files", [])]
-    additional_args = (
-        f"-noautoload -config {doomrunner_quote_arg(config)} "
-        f"-savedir {doomrunner_quote_arg(save_dir)} +exec {doomrunner_quote_arg(autoexec)}"
-    )
-    return {
-        "name": name,
-        "selected_engine": DOOMRUNNER_ENGINE_ID,
-        "selected_config": "",
-        "selected_IWAD": str(preset["iwad"]),
-        "selected_mappacks": [],
-        "mods": mods,
-        "load_maps_after_mods": False,
-        "alternative_paths": {
-            "config_dir": str(config.parent),
-            "save_dir": str(save_dir),
-            "demo_dir": "",
-            "screenshot_dir": str(screenshot_dir),
-        },
-        "additional_args": additional_args,
-        "env_vars": {},
-        "compatibility_options": {
-            "compat_mode": -1,
-            "compatflags1": 0,
-            "compatflags2": 0,
-        },
-    }
-
-
-def choose_doomrunner_selected_preset(presets: list[dict[str, Any]]) -> str:
-    preferred_names = [
-        "Project Brutality",
-        "Brutal Doom",
-        "UZDoom",
-        "Vanilla Doom",
-    ]
-    names = {str(preset.get("name", "")) for preset in presets}
-    for name in preferred_names:
-        if name in names:
-            return name
-    return str(presets[0]["name"]) if presets else ""
-
-
-def build_doomrunner_options(dirs: Dirs, manifest: dict[str, Any]) -> dict[str, Any]:
-    iwad_entries = build_doomrunner_iwad_entries(dirs)
-    presets = [build_doomrunner_preset(dirs, preset) for preset in manifest.get("presets", [])]
-    return {
-        "version": DOOMRUNNER_OPTIONS_VERSION,
-        "engines": {
-            "default_engine": DOOMRUNNER_ENGINE_ID,
-            "engine_list": [
-                {
-                    "id": DOOMRUNNER_ENGINE_ID,
-                    "name": DOOMRUNNER_ENGINE_NAME,
-                    "path": str(dirs.uzdoom / "uzdoom.sh"),
-                    "config_dir": str(dirs.uzdoom_config),
-                    "data_dir": str(dirs.root),
-                    "family": "ZDoom",
-                }
-            ],
-        },
-        "IWADs": {
-            "auto_update": False,
-            "directory": str(dirs.iwads),
-            "search_subdirs": False,
-            "default_iwad": choose_doomrunner_default_iwad(iwad_entries, dirs),
-            "IWAD_list": iwad_entries,
-        },
-        "maps": {
-            "directory": str(dirs.pwads),
-            "sort_column": 0,
-            "sort_order": 0,
-            "show_icons": False,
-        },
-        "mods": {
-            "last_used_dir": str(dirs.mods),
-            "show_icons": True,
-        },
-        "launch_options": {
-            "launch_mode": 0,
-            "map_name": "",
-            "save_file": "",
-            "map_name_demo": "",
-            "demo_file_record": "",
-            "demo_file_replay": "",
-            "demo_file_resume_from": "",
-            "demo_file_resume_to": "",
-        },
-        "multiplayer_options": {
-            "is_multiplayer": False,
-            "mult_role": 0,
-            "host_name": "",
-            "port": 5029,
-            "net_mode": 0,
-            "game_mode": 0,
-            "player_count": 2,
-            "team_damage": 0,
-            "time_limit": 0,
-            "frag_limit": 0,
-            "player_name": "",
-            "player_color": None,
-        },
-        "gameplay_options": {
-            "skill_idx": 1,
-            "skill_num": 1,
-            "no_monsters": False,
-            "fast_monsters": False,
-            "monsters_respawn": False,
-            "pistol_start": False,
-            "allow_cheats": False,
-            "dmflags1": 0,
-            "dmflags2": 0,
-            "dmflags3": 0,
-        },
-        "video_options": {
-            "monitor_idx": 0,
-            "resolution_x": STEAM_DECK_WIDTH,
-            "resolution_y": STEAM_DECK_HEIGHT,
-            "show_fps": False,
-        },
-        "audio_options": {
-            "no_sound": False,
-            "no_sfx": False,
-            "no_music": False,
-        },
-        "global_options": {
-            "use_preset_name_as_config_dir": False,
-            "use_preset_name_as_save_dir": False,
-            "use_preset_name_as_demo_dir": False,
-            "use_preset_name_as_screenshot_dir": False,
-            "additional_args": "",
-            "cmd_prefix": "",
-            "env_vars": {},
-        },
-        "presets": presets,
-        "selected_preset": choose_doomrunner_selected_preset(presets),
-        "use_absolute_paths": True,
-        "show_engine_output": True,
-        "close_on_launch": False,
-        "close_output_on_success": False,
-        "check_for_updates": False,
-        "ask_for_sandbox_permissions": False,
-        "wrap_lines_in_txt_viewer": False,
-        "options_storage": {
-            "launch_opts": 1,
-            "gameplay_opts": 1,
-            "compat_opts": 2,
-            "video_opts": 1,
-            "audio_opts": 1,
-        },
-        "preset_search": {
-            "panel_expanded": False,
-            "case_sensitive": False,
-            "use_regex": False,
-        },
-        "hide_map_label": False,
-        "geometry": {
-            "x": -2147483648,
-            "y": -2147483648,
-            "width": 0,
-            "height": 0,
-        },
-        "app_style": None,
-        "color_scheme": "system",
-    }
 
 
 def write_doomrunner_live_config(dirs: Dirs, manifest: dict[str, Any], args: argparse.Namespace, logger: logging.Logger) -> None:
