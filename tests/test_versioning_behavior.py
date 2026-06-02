@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
+from typing import Any, cast
 
 import doomdeck
 import yaml
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+else:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
 
@@ -23,18 +25,18 @@ SEMVER_PATTERN = re.compile(
 )
 
 
-def pyproject_data() -> dict[str, object]:
+def pyproject_data() -> dict[str, Any]:
     with (PROJECT_ROOT / "pyproject.toml").open("rb") as pyproject:
         return tomllib.load(pyproject)
 
 
-def project_metadata() -> dict[str, object]:
-    return pyproject_data()["project"]
+def project_metadata() -> dict[str, Any]:
+    return cast(dict[str, Any], pyproject_data()["project"])
 
 
-def release_workflow() -> dict[str, object]:
+def release_workflow() -> dict[str, Any]:
     workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
-    return yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    return cast(dict[str, Any], yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader))
 
 
 class VersioningBehaviorTests(unittest.TestCase):
@@ -64,6 +66,8 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertTrue(
             any(dependency.startswith("python-semantic-release") for dependency in dev_dependencies)
         )
+        self.assertTrue(any(dependency.startswith("ruff") for dependency in dev_dependencies))
+        self.assertTrue(any(dependency.startswith("ty") for dependency in dev_dependencies))
         self.assertEqual(semantic_release["assets"], ["uv.lock"])
         self.assertTrue(semantic_release["allow_zero_version"])
         self.assertEqual(semantic_release["build_command"], "uv lock && uv build --clear")
@@ -94,6 +98,15 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("semantic-release --noop version --print --no-push --no-vcs-release", justfile)
         self.assertIn("release-dry-run:", justfile)
         self.assertIn("semantic-release --noop version --no-push --no-vcs-release", justfile)
+
+    def test_project_checks_run_lint_and_typecheck(self) -> None:
+        justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+
+        self.assertIn("ruff-check:", justfile)
+        self.assertIn("{{ uv }} run ruff check .", justfile)
+        self.assertIn("ty-check:", justfile)
+        self.assertIn("{{ uv }} run ty check", justfile)
+        self.assertIn("check: just-check installer-check pycompile ruff-check ty-check test", justfile)
 
     def test_changelog_is_ready_for_semantic_release_updates(self) -> None:
         changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -131,6 +144,8 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("contents: read", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("uv run pytest", workflow)
+        self.assertIn("uv run ruff check .", workflow)
+        self.assertIn("uv run ty check", workflow)
         self.assertIn("uv build --clear", workflow)
         self.assertIn("uv run semantic-release version", workflow)
         self.assertIn("uv run semantic-release publish", workflow)

@@ -2,6 +2,7 @@
 """Compatibility wrapper for the packaged DoomDeck CLI."""
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from doomdeck.cli import main
+main = importlib.import_module("doomdeck.cli").main
 
 
 if __name__ == "__main__":

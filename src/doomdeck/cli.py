@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import fnmatch
 import hashlib
 import html
 import json
@@ -1910,7 +1909,7 @@ def add_or_update_steam_shortcut(
 
 
 def write_experimental_doomrunner_note(dirs: Dirs, args: argparse.Namespace, dry_run: bool, logger: logging.Logger) -> None:
-    note = {
+    note: dict[str, object] = {
         "note": "Live Doom Runner options.json generation is enabled by default.",
         "primary_options_json": str(doomrunner_options_paths(dirs)[0]),
         "compatibility_options_json": str(doomrunner_options_paths(dirs)[1]),

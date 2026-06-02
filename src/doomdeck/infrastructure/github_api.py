@@ -2,20 +2,18 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import Any, cast
 
 from doomdeck.domain.models import DoomDeckError
 
+_PYDANTIC_AVAILABLE = True
 try:
     from pydantic import BaseModel, ConfigDict, Field, ValidationError
 except ModuleNotFoundError:
-    BaseModel = None  # type: ignore[assignment]
-    ConfigDict = None  # type: ignore[assignment]
-    Field = None  # type: ignore[assignment]
-    ValidationError = None  # type: ignore[assignment]
+    _PYDANTIC_AVAILABLE = False
 
 
-if BaseModel is not None:
+if _PYDANTIC_AVAILABLE:
 
     class GitHubReleaseAssetPayload(BaseModel):
         """Release asset fields DoomDeck consumes from GitHub."""
@@ -81,7 +79,7 @@ else:
         default_branch: str | None = None
 
 
-def _format_validation_errors(exc: ValidationError) -> str:
+def _format_validation_errors(exc: Any) -> str:
     details: list[str] = []
     for error in exc.errors():
         location = ".".join(str(part) for part in error["loc"])
@@ -132,13 +130,14 @@ def _validate_github_release_payload_without_pydantic(payload: Any, repo: str) -
             if not isinstance(raw_asset, dict):
                 errors.append(f"assets.{index}: Input should be a valid dictionary")
                 continue
-            asset_name = _append_required_nonempty_str_error(errors, f"assets.{index}.name", raw_asset.get("name"))
+            raw_asset_dict = cast(dict[str, Any], raw_asset)
+            asset_name = _append_required_nonempty_str_error(errors, f"assets.{index}.name", raw_asset_dict.get("name"))
             download_url = _append_required_nonempty_str_error(
                 errors,
                 f"assets.{index}.browser_download_url",
-                raw_asset.get("browser_download_url"),
+                raw_asset_dict.get("browser_download_url"),
             )
-            size = _append_size_error(errors, f"assets.{index}.size", raw_asset.get("size"))
+            size = _append_size_error(errors, f"assets.{index}.size", raw_asset_dict.get("size"))
             if asset_name and download_url:
                 assets.append(GitHubReleaseAssetPayload(name=asset_name, browser_download_url=download_url, size=size))
 
@@ -158,20 +157,22 @@ def _validate_github_repository_payload_without_pydantic(payload: Any, repo: str
 
 
 def validate_github_release_payload(payload: Any, repo: str) -> GitHubReleasePayload:
-    if BaseModel is None:
+    if not _PYDANTIC_AVAILABLE:
         return _validate_github_release_payload_without_pydantic(payload, repo)
     try:
-        return GitHubReleasePayload.model_validate(payload)
+        model: Any = GitHubReleasePayload
+        return model.model_validate(payload)
     except ValidationError as exc:
         detail = _format_validation_errors(exc)
         raise DoomDeckError(f"Could not understand GitHub release metadata for {repo}: {detail}") from exc
 
 
 def validate_github_repository_payload(payload: Any, repo: str) -> GitHubRepositoryPayload:
-    if BaseModel is None:
+    if not _PYDANTIC_AVAILABLE:
         return _validate_github_repository_payload_without_pydantic(payload, repo)
     try:
-        return GitHubRepositoryPayload.model_validate(payload)
+        model: Any = GitHubRepositoryPayload
+        return model.model_validate(payload)
     except ValidationError as exc:
         detail = _format_validation_errors(exc)
         raise DoomDeckError(f"Could not understand GitHub repository metadata for {repo}: {detail}") from exc

@@ -37,6 +37,12 @@ jobs:
       - name: Compile Python files
         run: uv run python -m compileall -q doom_deck_setup.py src tests
 
+      - name: Lint Python files
+        run: uv run ruff check .
+
+      - name: Type check Python files
+        run: uv run ty check
+
       - name: Check installer syntax
         run: sh -n install.sh
 

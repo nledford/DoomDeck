@@ -36,6 +36,16 @@ just-check:
 pycompile:
     {{ uv }} run python -m compileall -q doom_deck_setup.py src tests
 
+# Run Python lint checks.
+[group("check")]
+ruff-check:
+    {{ uv }} run ruff check .
+
+# Run Python type checks.
+[group("check")]
+ty-check:
+    {{ uv }} run ty check
+
 # Check the installer shell script parses.
 [group("check")]
 installer-check:
@@ -43,7 +53,7 @@ installer-check:
 
 # Run the standard local verification set.
 [group("check")]
-check: just-check installer-check pycompile test cli-help module-help legacy-help
+check: just-check installer-check pycompile ruff-check ty-check test cli-help module-help legacy-help
 
 # Show the packaged console-script help.
 [group("cli")]
