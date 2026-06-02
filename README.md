@@ -8,7 +8,7 @@ Steam Deck Doom modding setup automation for Doom Runner, UZDoom, Brutal Doom, a
 
 In plain terms, it:
 
-- Creates a managed Doom folder, by default at `/home/deck/Games/Doom`.
+- Creates a managed Doom folder, by default at `$HOME/Games/Doom` (`/home/deck/Games/Doom` on Steam Deck).
 - Downloads and installs the Doom Runner AppImage.
 - Downloads and installs the UZDoom AppImage.
 - Finds your Steam-installed `DOOM + DOOM II` files and copies the usable Doom game data files into the managed folder.
@@ -106,6 +106,12 @@ uv run doomdeck install --dry-run
 By default, DoomDeck manages this folder:
 
 ```text
+$HOME/Games/Doom/
+```
+
+On Steam Deck, this normally resolves to:
+
+```text
 /home/deck/Games/Doom/
 ```
 
@@ -154,7 +160,7 @@ These options work with every command:
 | Option | What it means | When to use it |
 | --- | --- | --- |
 | `-h`, `--help` | Shows help for the selected command. | Use this when you want a quick reminder in the terminal. |
-| `--root ROOT` | Changes the managed Doom folder. Default: `/home/deck/Games/Doom`. | Use this if you want everything stored somewhere else, such as an SD card. |
+| `--root ROOT` | Changes the managed Doom folder. Default: `$HOME/Games/Doom`. | Use this if you want everything stored somewhere else, such as an SD card. |
 | `--steam-root STEAM_ROOT` | Tells DoomDeck exactly where your Steam folder is. | Use this if Steam is installed in a non-standard place or auto-detection fails. |
 | `--steam-user-id STEAM_USER_ID` | Tells DoomDeck which Steam userdata ID to use. | Use this if the wrong Steam profile is detected or you have multiple Steam users. |
 | `--dry-run` | Prints planned actions and logs intent without writing files. | Use this before a first run if you want to preview changes. |
@@ -283,7 +289,7 @@ doomdeck clean
 By default, `clean` does not delete the managed Doom folder. It moves it aside to a timestamped folder such as:
 
 ```text
-/home/deck/Games/Doom.removed-YYYYMMDD-HHMMSS
+$HOME/Games/Doom.removed-YYYYMMDD-HHMMSS
 ```
 
 This is useful when you want to start over but still keep the old files nearby.
@@ -315,7 +321,7 @@ doomdeck restore /path/to/backup.tar.gz
 `restore` extracts a backup archive under the managed folder's parent directory. If the managed folder already exists, it moves the current folder aside first using a timestamped name like:
 
 ```text
-/home/deck/Games/Doom.pre-restore-YYYYMMDD-HHMMSS
+$HOME/Games/Doom.pre-restore-YYYYMMDD-HHMMSS
 ```
 
 | Argument | What it means | When to use it |
