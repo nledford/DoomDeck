@@ -72,8 +72,8 @@ from doomdeck.infrastructure.github_api import (
 from doomdeck.infrastructure.steam_shortcuts import (
     get_bkv_str,
     load_shortcuts,
-    make_shortcut_entry,
-    steam_quote_path,
+    shortcut_entries,
+    upsert_shortcut,
 )
 
 APPID_DOOM_PLUS_DOOM_II = "2280"
@@ -1883,29 +1883,11 @@ def add_or_update_steam_shortcut(
     if shortcuts_path.exists():
         backup_path(shortcuts_path, dirs.backups, args.dry_run, logger, label="shortcuts.vdf")
     root = load_shortcuts(shortcuts_path)
-    shortcuts_obj = root["shortcuts"].value
-    target_exe = steam_quote_path(exe)
-    existing_key: Optional[str] = None
-    for key, value in shortcuts_obj.items():
-        if value.type_code != BKV_OBJECT:
-            continue
-        entry = value.value
-        existing_name = get_bkv_str(entry, "appname", "AppName")
-        existing_exe = get_bkv_str(entry, "exe", "Exe")
-        if existing_name == appname or existing_exe == target_exe:
-            existing_key = key
-            break
-    entry_value = make_shortcut_entry(appname, exe, start_dir, tags=["Doom", "Tools"])
-    if existing_key is not None:
-        logger.info("Update existing Steam shortcut %s in %s", appname, shortcuts_path)
-        shortcuts_obj[existing_key] = entry_value
+    result = upsert_shortcut(root, appname, exe, start_dir, tags=["Doom", "Tools"])
+    if result.created:
+        logger.info("Add Steam shortcut %s at index %s in %s", appname, result.key, shortcuts_path)
     else:
-        used = {int(k) for k in shortcuts_obj.keys() if k.isdigit()}
-        index = 0
-        while index in used:
-            index += 1
-        logger.info("Add Steam shortcut %s at index %s in %s", appname, index, shortcuts_path)
-        shortcuts_obj[str(index)] = entry_value
+        logger.info("Update existing Steam shortcut %s in %s", appname, shortcuts_path)
     atomic_write_bytes(shortcuts_path, BinaryVDF.dumps(root), args.dry_run, logger)
 
 
@@ -2274,7 +2256,7 @@ def _validate_steam(items: list[ValidationItem], dirs: Dirs, steam: SteamInfo) -
     if steam.shortcuts_vdf and steam.shortcuts_vdf.exists():
         try:
             root = load_shortcuts(steam.shortcuts_vdf)
-            shortcuts_obj = root["shortcuts"].value
+            shortcuts_obj = shortcut_entries(root)
             found = False
             for value in shortcuts_obj.values():
                 if value.type_code == BKV_OBJECT and get_bkv_str(value.value, "appname", "AppName") == "Doom Runner":
