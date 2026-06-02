@@ -6,6 +6,20 @@ DoomDeck uses Semantic Versioning and Conventional Commits. Release entries are 
 
 <!-- version list -->
 
+## v0.2.0 - 2026-05-31
+
+### Chores
+
+- Add local semantic release checks.
+
+### Continuous Integration
+
+- Add GitHub release workflow.
+
+### Features
+
+- Install ModDB WAD archives.
+
 ## v0.1.0 - 2026-05-31
 
 Initial packaged baseline for the DoomDeck CLI.

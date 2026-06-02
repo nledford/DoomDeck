@@ -18,7 +18,7 @@ just check
 just package-check
 ```
 
-If `uv` is not on your `PATH`, set `UV=/path/to/uv` when running `just`.
+The Justfile runs `uv` from your `PATH` by default. If `uv` is not on your `PATH`, set `UV=/path/to/uv` when running `just`.
 
 ## Project Layout
 

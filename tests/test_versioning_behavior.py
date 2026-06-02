@@ -100,7 +100,21 @@ class VersioningBehaviorTests(unittest.TestCase):
 
         self.assertIn("# Changelog", changelog)
         self.assertIn("<!-- version list -->", changelog)
+        self.assertIn("## v0.2.0", changelog)
         self.assertIn("## v0.1.0", changelog)
+
+    def test_readme_describes_the_current_release_check_result(self) -> None:
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("current release is `0.2.0`", readme)
+        self.assertIn("`v0.2.0`", readme)
+        self.assertIn("reports `0.2.0` as already released", readme)
+
+    def test_justfile_uses_uv_from_path_by_default(self) -> None:
+        justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+
+        self.assertIn('uv := env_var_or_default("UV", "uv")', justfile)
+        self.assertNotIn("/home/deck/.local/bin/uv", justfile)
 
     def test_github_release_workflow_runs_tests_before_publishing_release_assets(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text(

@@ -1,6 +1,6 @@
 set shell := ["bash", "-cu"]
 
-uv := env_var_or_default("UV", "/home/deck/.local/bin/uv")
+uv := env_var_or_default("UV", "uv")
 
 # Show available recipes.
 default:
