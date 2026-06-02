@@ -2128,19 +2128,25 @@ def _validate_managed_mods(items: list[ValidationItem], dirs: Dirs) -> None:
         )
 
 
+def _read_json_object_for_validation(items: list[ValidationItem], path: Path, label: str) -> Optional[dict[str, Any]]:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        add_validation_item(items, "FAIL", f"{label} is invalid: {path}: {exc}")
+        return None
+    if not isinstance(parsed, dict):
+        add_validation_item(items, "FAIL", f"{label} must be an object: {path}")
+        return None
+    add_validation_item(items, "PASS", f"{label} is valid: {path}")
+    return parsed
+
+
 def _validate_preset_manifest(items: list[ValidationItem], dirs: Dirs) -> Optional[dict[str, Any]]:
     manifest_path = dirs.doomrunner_config / "preset-manifest.json"
-    manifest: Optional[dict[str, Any]] = None
-    if manifest_path.exists():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            add_validation_item(items, "PASS", f"Preset manifest JSON is valid: {manifest_path}")
-        except json.JSONDecodeError as exc:
-            add_validation_item(items, "FAIL", f"Preset manifest JSON is invalid: {manifest_path}: {exc}")
-    else:
+    if not manifest_path.exists():
         add_validation_item(items, "FAIL", f"Preset manifest missing: {manifest_path}")
-
-    return manifest
+        return None
+    return _read_json_object_for_validation(items, manifest_path, "Preset manifest JSON")
 
 
 def _validate_preset_references(items: list[ValidationItem], manifest: dict[str, Any], dirs: Dirs) -> None:
@@ -2196,31 +2202,29 @@ def _validate_uzdoom_configs(items: list[ValidationItem], dirs: Dirs) -> None:
 def _validate_doomrunner_live_options(items: list[ValidationItem], dirs: Dirs) -> None:
     live_options_path = doomrunner_options_paths(dirs)[0]
     if live_options_path.exists():
-        try:
-            live_options = json.loads(live_options_path.read_text(encoding="utf-8"))
-            add_validation_item(items, "PASS", f"Doom Runner live options JSON is valid: {live_options_path}")
-            engine_list = live_options.get("engines", {}).get("engine_list", [])
-            engine_ok = any(
-                engine.get("id") == DOOMRUNNER_ENGINE_ID
-                and bool(engine.get("path"))
-                and Path(engine.get("path", "")).exists()
-                for engine in engine_list
-            )
-            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner live config has usable UZDoom engine: {live_options_path}")
-            iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
-            iwad_ok = any(bool(iwad.get("path")) and Path(iwad.get("path", "")).exists() for iwad in iwad_list)
-            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner live config has IWAD entries: {live_options_path}")
-            live_presets = live_options.get("presets", [])
-            preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
-            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner live config has launchable presets: {live_options_path}")
-            video_options = live_options.get("video_options", {})
-            resolution_ok = (
-                video_options.get("resolution_x") == STEAM_DECK_WIDTH
-                and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
-            )
-            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner live config uses Steam Deck resolution: {live_options_path}")
-        except json.JSONDecodeError as exc:
-            add_validation_item(items, "FAIL", f"Doom Runner live options JSON is invalid: {live_options_path}: {exc}")
+        live_options = _read_json_object_for_validation(items, live_options_path, "Doom Runner live options JSON")
+        if live_options is None:
+            return
+        engine_list = live_options.get("engines", {}).get("engine_list", [])
+        engine_ok = any(
+            engine.get("id") == DOOMRUNNER_ENGINE_ID
+            and bool(engine.get("path"))
+            and Path(engine.get("path", "")).exists()
+            for engine in engine_list
+        )
+        add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner live config has usable UZDoom engine: {live_options_path}")
+        iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
+        iwad_ok = any(bool(iwad.get("path")) and Path(iwad.get("path", "")).exists() for iwad in iwad_list)
+        add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner live config has IWAD entries: {live_options_path}")
+        live_presets = live_options.get("presets", [])
+        preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
+        add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner live config has launchable presets: {live_options_path}")
+        video_options = live_options.get("video_options", {})
+        resolution_ok = (
+            video_options.get("resolution_x") == STEAM_DECK_WIDTH
+            and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
+        )
+        add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner live config uses Steam Deck resolution: {live_options_path}")
     else:
         add_validation_item(items, "FAIL", f"Doom Runner live options missing: {live_options_path}")
 

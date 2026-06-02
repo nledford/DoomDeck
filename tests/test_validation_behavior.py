@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from doomdeck.application.doomrunner import doomrunner_options_paths
 from doomdeck.application.validation import add_validation_item, format_validation_report, validation_has_failures
 from doomdeck.cli import (
     validate_internal,
@@ -39,6 +40,24 @@ def test_validation_items_use_explicit_levels_and_format_report() -> None:
         "[PASS] First check passed\n"
         "[FAIL] Second check failed\n"
     )
+
+
+def test_validation_reports_non_object_json_configs_without_crashing(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+    args = argparse.Namespace(dry_run=False)
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    live_options_path = doomrunner_options_paths(dirs)[0]
+    manifest_path.parent.mkdir(parents=True)
+    live_options_path.parent.mkdir(parents=True)
+    manifest_path.write_text("[]", encoding="utf-8")
+    live_options_path.write_text("[]", encoding="utf-8")
+
+    report = validate_internal(args, dirs, SteamInfo(None, None, None, [], None), logger)
+
+    messages = {item.message for item in report}
+    assert f"Preset manifest JSON must be an object: {manifest_path}" in messages
+    assert f"Doom Runner live options JSON must be an object: {live_options_path}" in messages
 
 
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
