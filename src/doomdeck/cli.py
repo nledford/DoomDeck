@@ -2046,12 +2046,33 @@ def validate_internal(
     print_report: bool = False,
 ) -> list[ValidationItem]:
     items: list[ValidationItem] = []
+    _validate_environment(items, dirs)
+    _validate_tool_executables(items, dirs)
+    _validate_wads(items, dirs)
+    _validate_managed_mods(items, dirs)
+    manifest = _validate_preset_manifest(items, dirs)
+    if manifest:
+        _validate_preset_references(items, manifest, dirs)
+    _validate_uzdoom_configs(items, dirs)
+    _validate_doomrunner_live_options(items, dirs)
+    _validate_shell_scripts(items, dirs, args, logger)
+    _validate_steam(items, dirs, steam)
+    _validate_backups(items, dirs)
+
+    if print_report:
+        print_validation_report(items)
+    return items
+
+
+def _validate_environment(items: list[ValidationItem], dirs: Dirs) -> None:
     steamos_ok, steamos_msg = detect_steamos()
     add_validation_item(items, "PASS" if steamos_ok else "WARN", steamos_msg)
 
     for path in [dirs.root, dirs.iwads, dirs.launchers, dirs.configs, dirs.docs]:
         add_validation_item(items, "PASS" if path.exists() else "FAIL", f"Required path exists: {path}")
 
+
+def _validate_tool_executables(items: list[ValidationItem], dirs: Dirs) -> None:
     doomrunner_app = dirs.doomrunner / "DoomRunner.AppImage"
     doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
     uzdoom_app = dirs.uzdoom / "uzdoom.AppImage"
@@ -2065,6 +2086,8 @@ def validate_internal(
         executable = path.exists() and os.access(path, os.X_OK)
         add_validation_item(items, "PASS" if executable else "FAIL", f"{label} exists and is executable: {path}")
 
+
+def _validate_wads(items: list[ValidationItem], dirs: Dirs) -> None:
     copied_iwads = sorted(
         p.name
         for pattern in ["*.WAD", "*.wad"]
@@ -2086,6 +2109,8 @@ def validate_internal(
     else:
         add_validation_item(items, "WARN", f"No add-on WADs found in {dirs.pwads}")
 
+
+def _validate_managed_mods(items: list[ValidationItem], dirs: Dirs) -> None:
     brutal_alias = dirs.brutal / BRUTAL_DOOM_ALIAS
     add_validation_item(
         items,
@@ -2119,6 +2144,8 @@ def validate_internal(
             f"Project Brutality archive has expected UZDoom root files: {project_brutality_alias}",
         )
 
+
+def _validate_preset_manifest(items: list[ValidationItem], dirs: Dirs) -> Optional[dict[str, Any]]:
     manifest_path = dirs.doomrunner_config / "preset-manifest.json"
     manifest: Optional[dict[str, Any]] = None
     if manifest_path.exists():
@@ -2130,19 +2157,25 @@ def validate_internal(
     else:
         add_validation_item(items, "FAIL", f"Preset manifest missing: {manifest_path}")
 
-    if manifest:
-        project_brutality_preset_ok = any(preset.get("name") == "Project Brutality" for preset in manifest.get("presets", []))
-        add_validation_item(items, "PASS" if project_brutality_preset_ok else "FAIL", f"Preset manifest includes Project Brutality preset: {manifest_path}")
-        for preset in manifest.get("presets", []):
-            name = preset.get("name", "<unnamed>")
-            for key in ["iwad", "config", "autoexec", "launcher"]:
-                p = Path(preset.get(key, ""))
-                add_validation_item(items, "PASS" if p.exists() else "FAIL", f"Preset {name} references existing {key}: {p}")
-            for file_name in preset.get("files", []):
-                p = Path(file_name)
-                level = "PASS" if p.exists() else "WARN"
-                add_validation_item(items, level, f"Preset {name} mod file reference: {p}")
+    return manifest
 
+
+def _validate_preset_references(items: list[ValidationItem], manifest: dict[str, Any], dirs: Dirs) -> None:
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    project_brutality_preset_ok = any(preset.get("name") == "Project Brutality" for preset in manifest.get("presets", []))
+    add_validation_item(items, "PASS" if project_brutality_preset_ok else "FAIL", f"Preset manifest includes Project Brutality preset: {manifest_path}")
+    for preset in manifest.get("presets", []):
+        name = preset.get("name", "<unnamed>")
+        for key in ["iwad", "config", "autoexec", "launcher"]:
+            p = Path(preset.get(key, ""))
+            add_validation_item(items, "PASS" if p.exists() else "FAIL", f"Preset {name} references existing {key}: {p}")
+        for file_name in preset.get("files", []):
+            p = Path(file_name)
+            level = "PASS" if p.exists() else "WARN"
+            add_validation_item(items, level, f"Preset {name} mod file reference: {p}")
+
+
+def _validate_uzdoom_configs(items: list[ValidationItem], dirs: Dirs) -> None:
     for profile, back_binding in [("classic", "bind pad_b menu_back"), ("modern", "bind pad_b +deck_crouch_back")]:
         autoexec_path = dirs.uzdoom_config / profile / "autoexec.cfg"
         if autoexec_path.exists():
@@ -2176,6 +2209,8 @@ def validate_internal(
         else:
             add_validation_item(items, "FAIL", f"{profile} UZDoom ini missing: {ini_path}")
 
+
+def _validate_doomrunner_live_options(items: list[ValidationItem], dirs: Dirs) -> None:
     live_options_path = doomrunner_options_paths(dirs)[0]
     if live_options_path.exists():
         try:
@@ -2206,7 +2241,9 @@ def validate_internal(
     else:
         add_validation_item(items, "FAIL", f"Doom Runner live options missing: {live_options_path}")
 
-    shell_scripts = [uzdoom_wrapper, *sorted(dirs.launchers.glob("*.sh"))]
+
+def _validate_shell_scripts(items: list[ValidationItem], dirs: Dirs, args: argparse.Namespace, logger: logging.Logger) -> None:
+    shell_scripts = [dirs.uzdoom / "uzdoom.sh", *sorted(dirs.launchers.glob("*.sh"))]
     seen_scripts: set[Path] = set()
     for script in shell_scripts:
         if script in seen_scripts:
@@ -2222,6 +2259,9 @@ def validate_internal(
             result = run_command(["bash", "-n", str(script)], logger, dry_run=args.dry_run, timeout=10)
             add_validation_item(items, "PASS" if result.returncode == 0 else "FAIL", f"Shell syntax valid for {script}")
 
+
+def _validate_steam(items: list[ValidationItem], dirs: Dirs, steam: SteamInfo) -> None:
+    doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
     if steam.steam_root:
         add_validation_item(items, "PASS", f"Steam root detected: {steam.steam_root}")
     else:
@@ -2252,14 +2292,12 @@ def validate_internal(
     else:
         add_validation_item(items, "WARN", "Steam shortcuts.vdf does not exist yet or Steam user was not detected")
 
+
+def _validate_backups(items: list[ValidationItem], dirs: Dirs) -> None:
     if not any(dirs.backups.glob("*")):
         add_validation_item(items, "WARN", f"No backups found yet in {dirs.backups}; this is normal before the first replacement or Steam shortcut update")
     else:
         add_validation_item(items, "PASS", f"Backups directory contains backup files: {dirs.backups}")
-
-    if print_report:
-        print_validation_report(items)
-    return items
 
 
 def create_backup_archive(args: argparse.Namespace) -> int:
