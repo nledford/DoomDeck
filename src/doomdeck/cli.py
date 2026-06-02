@@ -2022,7 +2022,7 @@ def install(args: argparse.Namespace) -> int:
         logger.info("Restart Steam before expecting the non-Steam shortcut to appear in Gaming Mode")
 
     report = validate_internal(args, dirs, steam, logger, print_report=True)
-    return 1 if any(item.level == "FAIL" for item in report) else 0
+    return 1 if validation_has_failures(report) else 0
 
 
 def validate(args: argparse.Namespace) -> int:
@@ -2030,11 +2030,23 @@ def validate(args: argparse.Namespace) -> int:
     logger = configure_logging(dirs, args.verbose, args.dry_run)
     steam = discover_steam(args, logger)
     report = validate_internal(args, dirs, steam, logger, print_report=True)
-    return 1 if any(item.level == "FAIL" for item in report) else 0
+    return 1 if validation_has_failures(report) else 0
 
 
 def add_item(items: list[ValidationItem], level: str, message: str) -> None:
     items.append(ValidationItem(level, message))
+
+
+def validation_has_failures(items: Iterable[ValidationItem]) -> bool:
+    return any(item.level == "FAIL" for item in items)
+
+
+def print_validation_report(items: Iterable[ValidationItem]) -> None:
+    print("\nValidation report")
+    print("=================")
+    for item in items:
+        print(f"[{item.level}] {item.message}")
+    print()
 
 
 def validate_internal(
@@ -2257,11 +2269,7 @@ def validate_internal(
         add_item(items, "PASS", f"Backups directory contains backup files: {dirs.backups}")
 
     if print_report:
-        print("\nValidation report")
-        print("=================")
-        for item in items:
-            print(f"[{item.level}] {item.message}")
-        print()
+        print_validation_report(items)
     return items
 
 
