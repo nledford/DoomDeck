@@ -62,6 +62,7 @@ from doomdeck.infrastructure.archives import (
     common_zip_toplevel,
     normalized_zip_member_name,
     safe_extract_tar,
+    write_tree_tar_gz,
     zip_contains_markers,
 )
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
@@ -2291,12 +2292,7 @@ def create_backup_archive(args: argparse.Namespace) -> int:
     print_plan("Planned backup actions", [f"Create archive {archive}", "Exclude nested backup archives to avoid recursion"])
     if args.dry_run:
         return 0
-    dirs.backups.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive, "w:gz") as tar:
-        for item in dirs.root.rglob("*"):
-            if item == archive or dirs.backups in item.parents:
-                continue
-            tar.add(item, arcname=item.relative_to(dirs.root.parent), recursive=False)
+    write_tree_tar_gz(archive, dirs.root, exclude_dirs=[dirs.backups])
     logger.info("Backup archive written: %s", archive)
     return 0
 
@@ -2319,8 +2315,7 @@ def clean(args: argparse.Namespace) -> int:
         return 0
     external_backups.mkdir(parents=True, exist_ok=True)
     if args.yes_delete:
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(dirs.root, arcname=dirs.root.name)
+        write_tree_tar_gz(archive, dirs.root, include_root=True)
         shutil.rmtree(dirs.root)
         logger.info("Deleted %s after writing backup archive %s", dirs.root, archive)
     else:

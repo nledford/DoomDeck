@@ -12,6 +12,7 @@ from doomdeck.infrastructure.archives import (
     common_zip_toplevel,
     normalized_zip_member_name,
     safe_extract_tar,
+    write_tree_tar_gz,
     zip_contains_markers,
 )
 
@@ -67,3 +68,22 @@ def test_safe_tar_extraction_rejects_members_outside_destination(tmp_path) -> No
     with tarfile.open(archive_path, "r:gz") as archive:
         with pytest.raises(DoomDeckError, match="Unsafe path in tar archive"):
             safe_extract_tar(archive, tmp_path / "restore")
+
+
+def test_tree_backup_archive_excludes_nested_backup_directory(tmp_path) -> None:
+    root = tmp_path / "Doom"
+    backups = root / "backups"
+    archive_path = backups / "doom-deck-backup.tar.gz"
+    (root / "IWADs").mkdir(parents=True)
+    backups.mkdir(parents=True)
+    (root / "IWADs" / "DOOM.WAD").write_text("iwad", encoding="utf-8")
+    (backups / "old-backup").write_text("old", encoding="utf-8")
+
+    write_tree_tar_gz(archive_path, root, exclude_dirs=[backups])
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+
+    assert "Doom/IWADs/DOOM.WAD" in names
+    assert "Doom/backups/old-backup" not in names
+    assert "Doom/backups/doom-deck-backup.tar.gz" not in names

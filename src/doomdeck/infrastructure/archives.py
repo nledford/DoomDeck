@@ -75,6 +75,31 @@ def choose_payload_member(infos: list[zipfile.ZipInfo]) -> Optional[zipfile.ZipI
     return sorted(payloads, key=score, reverse=True)[0]
 
 
+def path_is_or_is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def write_tree_tar_gz(
+    archive_path: Path,
+    root: Path,
+    exclude_dirs: Iterable[Path] = (),
+    include_root: bool = False,
+) -> None:
+    excluded = tuple(exclude_dirs)
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "w:gz") as archive:
+        if include_root:
+            archive.add(root, arcname=root.name, recursive=False)
+        for item in root.rglob("*"):
+            if item == archive_path or any(path_is_or_is_under(item, excluded_dir) for excluded_dir in excluded):
+                continue
+            archive.add(item, arcname=item.relative_to(root.parent), recursive=False)
+
+
 def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
     dest = dest.resolve()
     for member in tar.getmembers():
