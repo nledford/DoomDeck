@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 from pathlib import Path
 from typing import Optional
 
@@ -63,7 +64,22 @@ class ModDBDownload:
     md5: str
 
 
+class ValidationLevel(str, enum.Enum):
+    PASS = "PASS"
+    WARN = "WARN"
+    FAIL = "FAIL"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def from_value(cls, value: "ValidationLevel | str") -> "ValidationLevel":
+        if isinstance(value, cls):
+            return value
+        return cls(value)
+
+
 @dataclasses.dataclass
 class ValidationItem:
-    level: str  # PASS, WARN, FAIL
+    level: ValidationLevel
     message: str

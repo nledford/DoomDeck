@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from doomdeck.application.validation import add_validation_item, format_validation_report, validation_has_failures
 from doomdeck.cli import (
     validate_internal,
     write_doomrunner_live_config,
@@ -21,6 +22,23 @@ from doomdeck.domain.paths import all_managed_dirs, build_dirs
 def make_executable(path: Path) -> None:
     path.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+
+
+def test_validation_items_use_explicit_levels_and_format_report() -> None:
+    report = []
+
+    add_validation_item(report, "PASS", "First check passed")
+    add_validation_item(report, "FAIL", "Second check failed")
+
+    assert validation_has_failures(report)
+    assert report[0].level == "PASS"
+    assert format_validation_report(report) == (
+        "\n"
+        "Validation report\n"
+        "=================\n"
+        "[PASS] First check passed\n"
+        "[FAIL] Second check failed\n"
+    )
 
 
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
