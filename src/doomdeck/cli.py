@@ -65,6 +65,10 @@ from doomdeck.infrastructure.archives import (
     zip_contains_markers,
 )
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
+from doomdeck.infrastructure.github_api import (
+    validate_github_release_payload,
+    validate_github_repository_payload,
+)
 from doomdeck.infrastructure.steam_shortcuts import (
     get_bkv_str,
     load_shortcuts,
@@ -467,16 +471,19 @@ def absolute_moddb_url(href: str, base: str = MODDB_BASE_URL) -> str:
 
 
 def select_release_asset(repo: str, prefer_legacy_appimage: bool, logger: logging.Logger) -> GitHubAsset:
-    release = github_request_json(f"https://api.github.com/repos/{repo}/releases/latest")
-    tag_name = release.get("tag_name") or release.get("name") or "latest"
-    assets = release.get("assets", [])
+    release = validate_github_release_payload(
+        github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
+        repo,
+    )
+    tag_name = release.label
+    assets = release.assets
     if not assets:
         raise DoomDeckError(f"GitHub release {repo}@{tag_name} has no downloadable assets")
 
     repo_key = repo.split("/")[-1].lower().replace("_", "").replace("-", "")
 
-    def score(asset: dict[str, Any]) -> int:
-        name = asset.get("name", "")
+    def score(asset: Any) -> int:
+        name = asset.name
         lower = name.lower()
         value = 0
         if "appimage" in lower:
@@ -496,13 +503,13 @@ def select_release_asset(repo: str, prefer_legacy_appimage: bool, logger: loggin
     ranked = sorted(assets, key=score, reverse=True)
     chosen = ranked[0]
     if score(chosen) < 50:
-        names = ", ".join(a.get("name", "<unnamed>") for a in assets)
+        names = ", ".join(a.name for a in assets)
         raise DoomDeckError(f"Could not identify a suitable Linux AppImage for {repo}@{tag_name}. Assets: {names}")
-    logger.info("Selected GitHub asset for %s: %s", repo, chosen.get("name"))
+    logger.info("Selected GitHub asset for %s: %s", repo, chosen.name)
     return GitHubAsset(
-        name=chosen["name"],
-        url=chosen["browser_download_url"],
-        size=chosen.get("size"),
+        name=chosen.name,
+        url=chosen.browser_download_url,
+        size=chosen.size,
         tag_name=str(tag_name),
     )
 
@@ -654,16 +661,17 @@ def write_mod_zip_as_pk3(
 
 def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
     try:
-        release = github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/releases/latest")
+        release_payload = github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/releases/latest")
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
             raise DoomDeckError(f"Could not read Project Brutality release metadata: {exc}") from exc
-        release = {}
-    tag_name = str(release.get("tag_name") or release.get("name") or "latest")
-    assets = release.get("assets") or []
+        release_payload = {}
+    release = validate_github_release_payload(release_payload, PROJECT_BRUTALITY_REPO)
+    tag_name = release.label
+    assets = release.assets
 
-    def score(asset: dict[str, Any]) -> int:
-        name = str(asset.get("name", ""))
+    def score(asset: Any) -> int:
+        name = asset.name
         lower = name.lower()
         value = 0
         if lower.endswith(".pk3"):
@@ -684,18 +692,21 @@ def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
     ranked = sorted(assets, key=score, reverse=True)
     if ranked and score(ranked[0]) > 0:
         chosen = ranked[0]
-        logger.info("Selected Project Brutality release asset: %s", chosen.get("name"))
+        logger.info("Selected Project Brutality release asset: %s", chosen.name)
         return GitHubAsset(
-            name=str(chosen["name"]),
-            url=str(chosen["browser_download_url"]),
-            size=chosen.get("size"),
+            name=chosen.name,
+            url=chosen.browser_download_url,
+            size=chosen.size,
             tag_name=tag_name,
         )
 
-    zipball_url = release.get("zipball_url")
+    zipball_url = release.zipball_url
     if not zipball_url:
-        repo_meta = github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}")
-        default_branch = str(repo_meta.get("default_branch") or "master")
+        repo_meta = validate_github_repository_payload(
+            github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}"),
+            PROJECT_BRUTALITY_REPO,
+        )
+        default_branch = repo_meta.default_branch or "master"
         tag_name = default_branch
         zipball_url = f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/zipball/{default_branch}"
     fallback_name = f"Project_Brutality-{safe_download_name(tag_name, 'latest')}.zip"

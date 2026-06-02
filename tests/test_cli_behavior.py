@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import unittest
+from unittest.mock import patch
 
-from doomdeck.cli import build_arg_parser
+from doomdeck.cli import build_arg_parser, select_release_asset
+from doomdeck.domain.models import DoomDeckError
 
 
 class CLIBehaviorTests(unittest.TestCase):
@@ -42,6 +45,34 @@ class CLIBehaviorTests(unittest.TestCase):
                 args = parser.parse_args(argv)
                 self.assertEqual(args.command, command)
                 self.assertTrue(callable(args.func))
+
+    def test_release_asset_selection_rejects_assets_missing_download_urls(self) -> None:
+        release = {
+            "tag_name": "v1.2.3",
+            "assets": [
+                {
+                    "name": "uzdoom-linux-x86_64.AppImage",
+                    "size": 1234,
+                }
+            ],
+        }
+
+        with patch("doomdeck.cli.github_request_json", return_value=release):
+            with self.assertRaisesRegex(DoomDeckError, "assets\\.0\\.browser_download_url"):
+                select_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"))
+
+    def test_release_asset_selection_rejects_non_list_assets(self) -> None:
+        release = {
+            "tag_name": "v1.2.3",
+            "assets": {
+                "name": "uzdoom-linux-x86_64.AppImage",
+                "browser_download_url": "https://example.test/uzdoom.AppImage",
+            },
+        }
+
+        with patch("doomdeck.cli.github_request_json", return_value=release):
+            with self.assertRaisesRegex(DoomDeckError, "assets"):
+                select_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"))
 
 
 if __name__ == "__main__":
