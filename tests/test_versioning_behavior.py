@@ -100,8 +100,11 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("semantic-release --noop version --no-push --no-vcs-release", justfile)
 
     def test_project_checks_run_lint_and_typecheck(self) -> None:
+        pyproject = pyproject_data()
         justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
 
+        self.assertEqual(pyproject["tool"]["ruff"]["lint"]["extend-select"], ["C901"])
+        self.assertEqual(pyproject["tool"]["ruff"]["lint"]["mccabe"]["max-complexity"], 15)
         self.assertIn("ruff-check:", justfile)
         self.assertIn("{{ uv }} run ruff check .", justfile)
         self.assertIn("ty-check:", justfile)
