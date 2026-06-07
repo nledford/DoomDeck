@@ -5,8 +5,9 @@ import zipfile
 
 import pytest
 
-from doomdeck.cli import extract_moddb_download_link, install_moddb_wad_archive
+from doomdeck.application.moddb_wads import install_moddb_wad_archive
 from doomdeck.domain.models import DoomDeckError
+from doomdeck.infrastructure.moddb import extract_moddb_download_link
 
 
 def test_moddb_wad_archive_extracts_playable_files_to_pwad_directory(tmp_path) -> None:

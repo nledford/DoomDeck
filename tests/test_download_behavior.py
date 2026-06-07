@@ -10,8 +10,9 @@ from unittest.mock import patch
 
 import pytest
 
-from doomdeck.cli import download_url, fetch_text_url, github_request_json
+from doomdeck.cli import download_url, github_request_json
 from doomdeck.domain.models import DoomDeckError
+from doomdeck.infrastructure.moddb import fetch_text_url
 
 
 @dataclass
