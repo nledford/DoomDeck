@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import dataclasses
 import logging
 import re
 import urllib.error
@@ -159,46 +160,61 @@ def extract_brutal_doom_pages(page_html: str, base_url: str) -> list[tuple[str, 
     return [(title, url) for url, title in pages.items()]
 
 
+@dataclasses.dataclass(frozen=True)
+class ModDBPageCandidate:
+    title: str
+    url: str
+    index: int
+
+
+@dataclasses.dataclass(frozen=True)
+class BrutalDoomSelectionPolicy:
+    channel: str
+
+    def score(self, candidate: ModDBPageCandidate) -> int:
+        slug = urllib.parse.urlparse(candidate.url).path.rstrip("/").split("/")[-1]
+        lower = f"{candidate.title} {slug}".lower()
+        title_compact = re.sub(r"[^a-z0-9]+", "", candidate.title.lower())
+        slug_compact = re.sub(r"[^a-z0-9]+", "", slug.lower())
+        if "brutaldoom" not in title_compact and "brutaldoomv" not in slug_compact and not re.search(r"\bbd\s*v?\d+", candidate.title.lower()):
+            return -1000
+        rejected = [
+            "platinum",
+            "kickass",
+            "monsters only",
+            "monster only",
+            "metal soundtrack",
+            "soundtrack",
+            "eday",
+            "extermination day",
+            "bolognese",
+            "meatgrinder",
+            "black edition",
+            "addon",
+            "launcher",
+        ]
+        if any(token in lower for token in rejected):
+            return -1000
+        score = 100 - candidate.index
+        versions: list[int] = []
+        for value in re.findall(r"\bv\s*(\d+)", lower):
+            # ModDB slugs sometimes collapse dots, e.g. v21.50.0 -> v21500.
+            major_text = value[:2] if len(value) >= 4 else value
+            versions.append(int(major_text))
+        if versions:
+            score += max(versions) * 10
+        is_test = any(token in lower for token in ["beta", "test", "demo"])
+        if self.channel == "stable":
+            score += 100 if not is_test else -200
+        else:
+            score += 30 if is_test else 0
+        if "full version" in lower:
+            score += 20
+        return score
+
+
 def brutal_doom_candidate_score(title: str, url: str, channel: str, index: int) -> int:
-    slug = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
-    lower = f"{title} {slug}".lower()
-    title_compact = re.sub(r"[^a-z0-9]+", "", title.lower())
-    slug_compact = re.sub(r"[^a-z0-9]+", "", slug.lower())
-    if "brutaldoom" not in title_compact and "brutaldoomv" not in slug_compact and not re.search(r"\bbd\s*v?\d+", title.lower()):
-        return -1000
-    rejected = [
-        "platinum",
-        "kickass",
-        "monsters only",
-        "monster only",
-        "metal soundtrack",
-        "soundtrack",
-        "eday",
-        "extermination day",
-        "bolognese",
-        "meatgrinder",
-        "black edition",
-        "addon",
-        "launcher",
-    ]
-    if any(token in lower for token in rejected):
-        return -1000
-    score = 100 - index
-    versions: list[int] = []
-    for value in re.findall(r"\bv\s*(\d+)", lower):
-        # ModDB slugs sometimes collapse dots, e.g. v21.50.0 -> v21500.
-        major_text = value[:2] if len(value) >= 4 else value
-        versions.append(int(major_text))
-    if versions:
-        score += max(versions) * 10
-    is_test = any(token in lower for token in ["beta", "test", "demo"])
-    if channel == "stable":
-        score += 100 if not is_test else -200
-    else:
-        score += 30 if is_test else 0
-    if "full version" in lower:
-        score += 20
-    return score
+    return BrutalDoomSelectionPolicy(channel).score(ModDBPageCandidate(title, url, index))
 
 
 def select_brutal_doom_download(channel: str, logger: logging.Logger, user_agent: str = DEFAULT_USER_AGENT) -> ModDBDownload:
@@ -221,30 +237,31 @@ def select_brutal_doom_download(channel: str, logger: logging.Logger, user_agent
         detail = "; ".join(errors) if errors else "no matching download links found"
         raise DoomDeckError(f"Could not discover Brutal Doom downloads on ModDB: {detail}")
 
-    ranked = sorted(
-        enumerate(unique_pages),
-        key=lambda item: brutal_doom_candidate_score(item[1][0], item[1][1], channel, item[0]),
-        reverse=True,
-    )
-    for index, (title, page_url) in ranked:
-        if brutal_doom_candidate_score(title, page_url, channel, index) <= 0:
+    policy = BrutalDoomSelectionPolicy(channel)
+    candidates = [
+        ModDBPageCandidate(title=title, url=url, index=index)
+        for index, (title, url) in enumerate(unique_pages)
+    ]
+    ranked = sorted(candidates, key=policy.score, reverse=True)
+    for candidate in ranked:
+        if policy.score(candidate) <= 0:
             continue
-        logger.info("Selected Brutal Doom ModDB page: %s", title)
+        logger.info("Selected Brutal Doom ModDB page: %s", candidate.title)
         try:
-            page_html = fetch_text_url(page_url, logger, user_agent=user_agent)
+            page_html = fetch_text_url(candidate.url, logger, user_agent=user_agent)
         except urllib.error.URLError as exc:
-            logger.warning("Could not read Brutal Doom page %s: %s", page_url, exc)
+            logger.warning("Could not read Brutal Doom page %s: %s", candidate.url, exc)
             continue
         lines = html_text_lines(page_html)
-        filename = line_after_label(lines, "Filename") or safe_download_name(page_url, "brutal-doom.zip")
+        filename = line_after_label(lines, "Filename") or safe_download_name(candidate.url, "brutal-doom.zip")
         updated = line_after_label(lines, "Updated")
         md5 = line_after_label(lines, "MD5 Hash")
-        start_url = extract_moddb_download_link(page_html, page_url)
+        start_url = extract_moddb_download_link(page_html, candidate.url)
         return ModDBDownload(
-            title=title,
-            page_url=page_url,
+            title=candidate.title,
+            page_url=candidate.url,
             filename=safe_download_name(filename, "brutal-doom.zip"),
-            download_url=resolve_moddb_download_url(start_url, page_url, logger, user_agent=user_agent),
+            download_url=resolve_moddb_download_url(start_url, candidate.url, logger, user_agent=user_agent),
             updated=updated,
             md5=md5,
         )
