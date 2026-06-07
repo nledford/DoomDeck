@@ -43,7 +43,7 @@ from doomdeck.application.doomrunner import (
     build_doomrunner_options,
     doomrunner_options_paths,
 )
-from doomdeck.application.install import build_install_actions
+from doomdeck.application.install import build_install_plan
 from doomdeck.application.managed_mods import (
     install_brutal_doom_archive,
     install_project_brutality_archive,
@@ -1282,7 +1282,7 @@ def install(args: argparse.Namespace) -> int:
     logger = configure_logging(dirs, args.verbose, args.dry_run)
     steamos_ok, steamos_msg = detect_steamos()
     steam = discover_steam(args, logger)
-    actions = build_install_actions(
+    plan = build_install_plan(
         dirs=dirs,
         steam=steam,
         appid=APPID_DOOM_PLUS_DOOM_II,
@@ -1290,7 +1290,7 @@ def install(args: argparse.Namespace) -> int:
         moddb_wad_urls=args.moddb_wad_urls,
         skip_steam_shortcut=args.skip_steam_shortcut,
     )
-    print_plan("Planned install actions", actions)
+    print_plan("Planned install actions", plan.render_actions())
 
     if not steamos_ok:
         logger.warning("Environment warning: %s", steamos_msg)

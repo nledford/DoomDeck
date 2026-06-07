@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doomdeck.application.install import build_install_actions
+from doomdeck.application.install import build_install_actions, build_install_plan
 from doomdeck.domain.models import SteamInfo
 from doomdeck.domain.paths import build_dirs
 
@@ -27,6 +27,42 @@ def test_install_actions_include_optional_moddb_and_steam_shortcut_steps(tmp_pat
     assert f"Create/update managed layout under {dirs.root}" in actions
     assert "Download requested ModDB WAD archives into the PWAD map directory" in actions
     assert f"Add/update Steam non-Steam shortcut for Doom Runner at {steam.shortcuts_vdf}" in actions
+
+
+def test_install_plan_preserves_rendered_action_contract(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    steam = SteamInfo(None, None, None, [], None)
+
+    plan = build_install_plan(
+        dirs=dirs,
+        steam=steam,
+        appid="2280",
+        steamos_msg="SteamOS detected",
+        moddb_wad_urls=[],
+        skip_steam_shortcut=True,
+    )
+
+    assert [action.id for action in plan.actions] == [
+        "managed-layout",
+        "steamos-check",
+        "steam-root-detection",
+        "steam-app-detection",
+        "doomrunner-appimage",
+        "uzdoom-appimage",
+        "steam-wads",
+        "uzdoom-launchers",
+        "brutal-doom",
+        "project-brutality",
+        "doomrunner-config",
+    ]
+    assert plan.render_actions() == build_install_actions(
+        dirs=dirs,
+        steam=steam,
+        appid="2280",
+        steamos_msg="SteamOS detected",
+        moddb_wad_urls=[],
+        skip_steam_shortcut=True,
+    )
 
 
 def test_install_actions_omit_steam_shortcut_when_skipped(tmp_path) -> None:
