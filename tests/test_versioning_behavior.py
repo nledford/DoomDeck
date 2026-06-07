@@ -146,6 +146,11 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("contents: read", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertEqual(
+            workflow_data["jobs"]["test"]["strategy"]["matrix"]["python-version"],
+            ["3.10", "3.11", "3.12", "3.13", "3.14"],
+        )
+        self.assertIn("uv python install ${{ matrix.python-version }}", workflow)
         self.assertIn("uv run pytest", workflow)
         self.assertIn("uv run ruff check .", workflow)
         self.assertIn("uv run ty check", workflow)
