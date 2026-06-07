@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from doomdeck.application.doomrunner import doomrunner_options_paths
-from doomdeck.application.validation import add_validation_item, format_validation_report, validation_has_failures
+from doomdeck.application.validation import (
+    InstallationValidator,
+    add_validation_item,
+    format_validation_report,
+    validation_has_failures,
+)
 from doomdeck.cli import (
     validate_internal,
     write_doomrunner_live_config,
@@ -40,6 +45,43 @@ def test_validation_items_use_explicit_levels_and_format_report() -> None:
         "[PASS] First check passed\n"
         "[FAIL] Second check failed\n"
     )
+
+
+def test_installation_validator_uses_injected_environment_check(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    validator = InstallationValidator(
+        steamos_detector=lambda: (True, "SteamOS test fixture"),
+        shell_syntax_checker=lambda _path: True,
+    )
+
+    report = validator.validate(dirs, SteamInfo(None, None, None, [], None))
+
+    messages = {item.message: item.level for item in report}
+    assert messages["SteamOS test fixture"] == "PASS"
+    assert messages[f"Required path exists: {dirs.root}"] == "FAIL"
+
+
+def test_installation_validator_checks_shell_syntax_through_dependency(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    script_path = dirs.launchers / "example.sh"
+    script_path.parent.mkdir(parents=True)
+    make_executable(script_path)
+    checked_paths: list[Path] = []
+
+    def reject_shell_syntax(path: Path) -> bool:
+        checked_paths.append(path)
+        return False
+
+    validator = InstallationValidator(
+        steamos_detector=lambda: (True, "SteamOS test fixture"),
+        shell_syntax_checker=reject_shell_syntax,
+    )
+
+    report = validator.validate(dirs, SteamInfo(None, None, None, [], None))
+
+    assert script_path in checked_paths
+    messages = {item.message: item.level for item in report}
+    assert messages[f"Shell syntax valid for {script_path}"] == "FAIL"
 
 
 def test_validation_reports_non_object_json_configs_without_crashing(tmp_path: Path) -> None:

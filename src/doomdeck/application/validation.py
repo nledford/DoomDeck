@@ -1,9 +1,27 @@
-"""Validation result helpers."""
+"""Installation validation rules and reporting helpers."""
 from __future__ import annotations
 
-from typing import Iterable
+import dataclasses
+import json
+import os
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional
 
-from doomdeck.domain.models import ValidationItem, ValidationLevel
+from doomdeck.application.doomrunner import DOOMRUNNER_ENGINE_ID, doomrunner_options_paths
+from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
+from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
+from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
+from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
+from doomdeck.infrastructure.archives import zip_contains_markers
+from doomdeck.infrastructure.binary_vdf import BKV_OBJECT
+from doomdeck.infrastructure.steam_shortcuts import get_bkv_str, load_shortcuts, shortcut_entries
+
+SteamOSDetector = Callable[[], tuple[bool, str]]
+ShellSyntaxChecker = Callable[[Path], bool]
+
+APPID_DOOM_PLUS_DOOM_II = "2280"
+BRUTAL_DOOM_ALIAS = BRUTAL_DOOM_MOD.alias
+PROJECT_BRUTALITY_ALIAS = PROJECT_BRUTALITY_MOD.alias
 
 
 def add_validation_item(items: list[ValidationItem], level: ValidationLevel | str, message: str) -> None:
@@ -19,3 +37,269 @@ def format_validation_report(items: Iterable[ValidationItem]) -> str:
     lines.extend(f"[{item.level.value}] {item.message}" for item in items)
     lines.append("")
     return "\n".join(lines)
+
+
+def script_has_execve_shebang(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+@dataclasses.dataclass(frozen=True)
+class InstallationValidator:
+    """Validate a managed DoomDeck installation without depending on the CLI."""
+
+    steamos_detector: SteamOSDetector
+    shell_syntax_checker: ShellSyntaxChecker
+    steam_appid: str = APPID_DOOM_PLUS_DOOM_II
+
+    def validate(self, dirs: Dirs, steam: SteamInfo) -> list[ValidationItem]:
+        items: list[ValidationItem] = []
+        self._validate_environment(items, dirs)
+        self._validate_tool_executables(items, dirs)
+        self._validate_wads(items, dirs)
+        self._validate_managed_mods(items, dirs)
+        manifest = self._validate_preset_manifest(items, dirs)
+        if manifest:
+            self._validate_preset_references(items, manifest, dirs)
+        self._validate_uzdoom_configs(items, dirs)
+        self._validate_doomrunner_live_options(items, dirs)
+        self._validate_shell_scripts(items, dirs)
+        self._validate_steam(items, dirs, steam)
+        self._validate_backups(items, dirs)
+        return items
+
+    def _validate_environment(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        steamos_ok, steamos_msg = self.steamos_detector()
+        add_validation_item(items, "PASS" if steamos_ok else "WARN", steamos_msg)
+
+        for path in [dirs.root, dirs.iwads, dirs.launchers, dirs.configs, dirs.docs]:
+            add_validation_item(items, "PASS" if path.exists() else "FAIL", f"Required path exists: {path}")
+
+    def _validate_tool_executables(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        doomrunner_app = dirs.doomrunner / "DoomRunner.AppImage"
+        doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
+        uzdoom_app = dirs.uzdoom / "uzdoom.AppImage"
+        uzdoom_wrapper = dirs.uzdoom / "uzdoom.sh"
+        for label, path in [
+            ("Doom Runner AppImage", doomrunner_app),
+            ("Doom Runner wrapper", doomrunner_wrapper),
+            ("UZDoom AppImage", uzdoom_app),
+            ("UZDoom wrapper", uzdoom_wrapper),
+        ]:
+            executable = path.exists() and os.access(path, os.X_OK)
+            add_validation_item(items, "PASS" if executable else "FAIL", f"{label} exists and is executable: {path}")
+
+    def _validate_wads(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        copied_iwads = sorted(
+            p.name
+            for pattern in ["*.WAD", "*.wad"]
+            for p in dirs.iwads.glob(pattern)
+            if p.name.lower() in IWAD_CANONICAL_NAMES
+        )
+        if copied_iwads:
+            add_validation_item(items, "PASS", f"IWADs present: {', '.join(copied_iwads)}")
+        else:
+            add_validation_item(items, "FAIL", f"No IWADs found in {dirs.iwads}")
+        for required in ["DOOM.WAD", "DOOM2.WAD"]:
+            add_validation_item(items, "PASS" if (dirs.iwads / required).exists() else "WARN", f"Expected common IWAD: {dirs.iwads / required}")
+
+        addon_wads = sorted(p.name for pattern in ["*.WAD", "*.wad"] for p in dirs.pwads.glob(pattern))
+        if addon_wads:
+            sample = ", ".join(addon_wads[:8])
+            suffix = "" if len(addon_wads) <= 8 else f", ... ({len(addon_wads)} total)"
+            add_validation_item(items, "PASS", f"Add-on WADs present in {dirs.pwads}: {sample}{suffix}")
+        else:
+            add_validation_item(items, "WARN", f"No add-on WADs found in {dirs.pwads}")
+
+    def _validate_managed_mods(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        brutal_alias = dirs.brutal / BRUTAL_DOOM_ALIAS
+        add_validation_item(
+            items,
+            "PASS" if brutal_alias.exists() else "WARN",
+            f"Brutal Doom alias exists for Brutal presets: {brutal_alias}",
+        )
+        if brutal_alias.exists():
+            brutal_metadata = dirs.brutal / "brutal-doom.json"
+            add_validation_item(
+                items,
+                "PASS" if brutal_metadata.exists() else "WARN",
+                f"Brutal Doom managed update metadata exists: {brutal_metadata}",
+            )
+        project_brutality_alias = dirs.project_brutality / PROJECT_BRUTALITY_ALIAS
+        add_validation_item(
+            items,
+            "PASS" if project_brutality_alias.exists() else "WARN",
+            f"Project Brutality alias exists for Project Brutality preset: {project_brutality_alias}",
+        )
+        if project_brutality_alias.exists():
+            project_brutality_metadata = dirs.project_brutality / "project-brutality.json"
+            add_validation_item(
+                items,
+                "PASS" if project_brutality_metadata.exists() else "WARN",
+                f"Project Brutality managed update metadata exists: {project_brutality_metadata}",
+            )
+            markers_ok = zip_contains_markers(project_brutality_alias, {"zscript.zc", "gameinfo.txt"})
+            add_validation_item(
+                items,
+                "PASS" if markers_ok else "WARN",
+                f"Project Brutality archive has expected UZDoom root files: {project_brutality_alias}",
+            )
+
+    def _read_json_object_for_validation(
+        self,
+        items: list[ValidationItem],
+        path: Path,
+        label: str,
+    ) -> Optional[dict[str, Any]]:
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            add_validation_item(items, "FAIL", f"{label} is invalid: {path}: {exc}")
+            return None
+        if not isinstance(parsed, dict):
+            add_validation_item(items, "FAIL", f"{label} must be an object: {path}")
+            return None
+        add_validation_item(items, "PASS", f"{label} is valid: {path}")
+        return parsed
+
+    def _validate_preset_manifest(self, items: list[ValidationItem], dirs: Dirs) -> Optional[dict[str, Any]]:
+        manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+        if not manifest_path.exists():
+            add_validation_item(items, "FAIL", f"Preset manifest missing: {manifest_path}")
+            return None
+        return self._read_json_object_for_validation(items, manifest_path, "Preset manifest JSON")
+
+    def _validate_preset_references(self, items: list[ValidationItem], manifest: dict[str, Any], dirs: Dirs) -> None:
+        manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+        project_brutality_preset_ok = any(preset.get("name") == "Project Brutality" for preset in manifest.get("presets", []))
+        add_validation_item(items, "PASS" if project_brutality_preset_ok else "FAIL", f"Preset manifest includes Project Brutality preset: {manifest_path}")
+        for preset in manifest.get("presets", []):
+            name = preset.get("name", "<unnamed>")
+            for key in ["iwad", "config", "autoexec", "launcher"]:
+                p = Path(preset.get(key, ""))
+                add_validation_item(items, "PASS" if p.exists() else "FAIL", f"Preset {name} references existing {key}: {p}")
+            for file_name in preset.get("files", []):
+                p = Path(file_name)
+                level = "PASS" if p.exists() else "WARN"
+                add_validation_item(items, level, f"Preset {name} mod file reference: {p}")
+
+    def _validate_uzdoom_configs(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        for profile, back_binding in [("classic", "bind pad_b menu_back"), ("modern", "bind pad_b +deck_crouch_back")]:
+            autoexec_path = dirs.uzdoom_config / profile / "autoexec.cfg"
+            if autoexec_path.exists():
+                text = autoexec_path.read_text(encoding="utf-8").lower()
+                controller_ok = all(
+                    needle in text
+                    for needle in [
+                        "use_joystick true",
+                        "bind pad_a +deck_use_select",
+                        back_binding,
+                        "bind pad_start menu_main",
+                    ]
+                )
+                add_validation_item(items, "PASS" if controller_ok else "FAIL", f"{profile} UZDoom Steam Deck controller bindings: {autoexec_path}")
+            else:
+                add_validation_item(items, "FAIL", f"{profile} UZDoom autoexec missing: {autoexec_path}")
+
+            ini_path = dirs.uzdoom_config / profile / "uzdoom.ini"
+            if ini_path.exists():
+                text = ini_path.read_text(encoding="utf-8").lower()
+                display_ok = all(
+                    needle in text
+                    for needle in [
+                        f"vid_defwidth={STEAM_DECK_WIDTH}",
+                        f"vid_defheight={STEAM_DECK_HEIGHT}",
+                        "vid_fullscreen=true",
+                        "use_joystick=true",
+                    ]
+                )
+                add_validation_item(items, "PASS" if display_ok else "FAIL", f"{profile} UZDoom Steam Deck display settings: {ini_path}")
+            else:
+                add_validation_item(items, "FAIL", f"{profile} UZDoom ini missing: {ini_path}")
+
+    def _validate_doomrunner_live_options(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        live_options_path = doomrunner_options_paths(dirs)[0]
+        if live_options_path.exists():
+            live_options = self._read_json_object_for_validation(items, live_options_path, "Doom Runner live options JSON")
+            if live_options is None:
+                return
+            engine_list = live_options.get("engines", {}).get("engine_list", [])
+            engine_ok = any(
+                engine.get("id") == DOOMRUNNER_ENGINE_ID
+                and bool(engine.get("path"))
+                and Path(engine.get("path", "")).exists()
+                for engine in engine_list
+            )
+            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner live config has usable UZDoom engine: {live_options_path}")
+            iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
+            iwad_ok = any(bool(iwad.get("path")) and Path(iwad.get("path", "")).exists() for iwad in iwad_list)
+            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner live config has IWAD entries: {live_options_path}")
+            live_presets = live_options.get("presets", [])
+            preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
+            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner live config has launchable presets: {live_options_path}")
+            video_options = live_options.get("video_options", {})
+            resolution_ok = (
+                video_options.get("resolution_x") == STEAM_DECK_WIDTH
+                and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
+            )
+            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner live config uses Steam Deck resolution: {live_options_path}")
+        else:
+            add_validation_item(items, "FAIL", f"Doom Runner live options missing: {live_options_path}")
+
+    def _validate_shell_scripts(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        shell_scripts = [dirs.uzdoom / "uzdoom.sh", *sorted(dirs.launchers.glob("*.sh"))]
+        seen_scripts: set[Path] = set()
+        for script in shell_scripts:
+            if script in seen_scripts:
+                continue
+            seen_scripts.add(script)
+            if script.exists():
+                shebang_ok = script_has_execve_shebang(script)
+                add_validation_item(
+                    items,
+                    "PASS" if shebang_ok else "FAIL",
+                    f"Shell script has execve-compatible shebang on first line: {script}",
+                )
+                syntax_ok = self.shell_syntax_checker(script)
+                add_validation_item(items, "PASS" if syntax_ok else "FAIL", f"Shell syntax valid for {script}")
+
+    def _validate_steam(self, items: list[ValidationItem], dirs: Dirs, steam: SteamInfo) -> None:
+        doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
+        if steam.steam_root:
+            add_validation_item(items, "PASS", f"Steam root detected: {steam.steam_root}")
+        else:
+            add_validation_item(items, "WARN", "Steam root not detected")
+        if steam.app_install_dir:
+            add_validation_item(items, "PASS", f"Steam app {self.steam_appid} install detected: {steam.app_install_dir}")
+        else:
+            add_validation_item(items, "WARN", f"Steam app {self.steam_appid} install not detected")
+
+        if steam.shortcuts_vdf and steam.shortcuts_vdf.exists():
+            try:
+                root = load_shortcuts(steam.shortcuts_vdf)
+                shortcuts_obj = shortcut_entries(root)
+                found = False
+                for value in shortcuts_obj.values():
+                    if value.type_code == BKV_OBJECT and get_bkv_str(value.value, "appname", "AppName") == "Doom Runner":
+                        found = True
+                        exe = get_bkv_str(value.value, "exe", "Exe")
+                        if str(doomrunner_wrapper) in exe:
+                            add_validation_item(items, "PASS", "Steam shortcut exists for Doom Runner with expected wrapper path")
+                        else:
+                            add_validation_item(items, "WARN", f"Steam shortcut named Doom Runner exists but exe differs: {exe}")
+                        break
+                if not found:
+                    add_validation_item(items, "WARN", f"No Doom Runner shortcut found in {steam.shortcuts_vdf}")
+            except DoomDeckError as exc:
+                add_validation_item(items, "FAIL", f"Could not parse shortcuts.vdf: {exc}")
+        else:
+            add_validation_item(items, "WARN", "Steam shortcuts.vdf does not exist yet or Steam user was not detected")
+
+    def _validate_backups(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        if not any(dirs.backups.glob("*")):
+            add_validation_item(items, "WARN", f"No backups found yet in {dirs.backups}; this is normal before the first replacement or Steam shortcut update")
+        else:
+            add_validation_item(items, "PASS", f"Backups directory contains backup files: {dirs.backups}")
