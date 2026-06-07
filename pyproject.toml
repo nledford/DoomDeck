@@ -53,9 +53,13 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "deptry>=0.25.1",
+    "pip-audit>=2.10.0",
     "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
     "python-semantic-release>=10.5.3",
     "pyyaml>=6.0.3",
+    "radon>=6.0.1",
     "ruff>=0.15.15",
     "tomli>=2.4.1",
     "ty>=0.0.42",
