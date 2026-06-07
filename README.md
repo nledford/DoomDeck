@@ -439,6 +439,15 @@ Run the test suite with:
 uv run pytest
 ```
 
+Common local quality checks are available through `just`:
+
+```bash
+just check
+just coverage
+just analysis
+just quality
+```
+
 ### Versioning and Releases
 
 DoomDeck uses Semantic Versioning for package versions. The current release is `0.2.0`, which means the project is still before a stable `1.0.0` release.

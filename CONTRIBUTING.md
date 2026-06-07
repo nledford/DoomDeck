@@ -15,6 +15,9 @@ Useful commands are available through `just`:
 ```bash
 just --list
 just check
+just coverage
+just analysis
+just quality
 just package-check
 ```
 
@@ -43,6 +46,14 @@ For packaging-sensitive changes, also run:
 ```bash
 just package-check
 ```
+
+For dependency, coverage, complexity, and maintainability checks, run:
+
+```bash
+just analysis
+```
+
+`just quality` runs the same coverage and dependency checks with calibrated complexity and maintainability gates.
 
 For GitHub Actions workflow changes, run:
 

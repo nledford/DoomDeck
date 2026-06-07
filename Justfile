@@ -26,6 +26,11 @@ test-verbose:
 test-path path:
     {{ uv }} run pytest "{{ path }}"
 
+# Run the test suite with package coverage.
+[group("test")]
+coverage:
+    {{ uv }} run pytest --cov=doomdeck --cov-report=term-missing
+
 # Check that this Justfile is formatted.
 [group("check")]
 just-check:
@@ -54,6 +59,44 @@ installer-check:
 # Run the standard local verification set.
 [group("check")]
 check: just-check installer-check pycompile ruff-check ty-check test cli-help module-help legacy-help
+
+# Report cyclomatic complexity.
+[group("analysis")]
+complexity:
+    {{ uv }} run radon cc src tests -s
+
+# Report maintainability index.
+[group("analysis")]
+maintainability:
+    {{ uv }} run radon mi src tests -s
+
+# Audit Python dependencies for known vulnerabilities.
+[group("analysis")]
+audit:
+    {{ uv }} run pip-audit
+
+# Check declared dependencies against imports.
+[group("analysis")]
+deps:
+    {{ uv }} run deptry . --known-first-party doomdeck
+
+# Fail on severe complexity regressions.
+[group("analysis")]
+complexity-gate:
+    @output="$({{ uv }} run radon cc src tests -s -n E 2>&1)"; status=$?; if [ "$status" -ne 0 ]; then echo "$output"; exit "$status"; fi; if [ -n "$output" ]; then echo "$output"; exit 1; fi
+
+# Fail on severe maintainability regressions.
+[group("analysis")]
+maintainability-gate:
+    @output="$({{ uv }} run radon mi src tests -s -n D 2>&1)"; status=$?; if [ "$status" -ne 0 ]; then echo "$output"; exit "$status"; fi; if [ -n "$output" ]; then echo "$output"; exit 1; fi
+
+# Run non-gating local analysis reports.
+[group("analysis")]
+analysis: coverage complexity maintainability audit deps
+
+# Run stricter local quality gates.
+[group("analysis")]
+quality: coverage complexity-gate maintainability-gate audit deps
 
 # Show the packaged console-script help.
 [group("cli")]
@@ -100,6 +143,17 @@ sdist-files: build
 package-check: build
     python3 -m zipfile -l "$(ls -1 dist/*.whl | head -n 1)"
     tar -tf "$(ls -1 dist/*.tar.gz | head -n 1)"
+
+# Upgrade locked dependencies and sync the local environment.
+[group("maintenance")]
+update:
+    {{ uv }} lock --upgrade
+    {{ uv }} sync
+
+# Install the console script as a uv tool from this checkout.
+[group("setup")]
+install:
+    {{ uv }} tool install --force .
 
 # Print the next semantic-release version without writing files, tags, or releases.
 [group("release")]
