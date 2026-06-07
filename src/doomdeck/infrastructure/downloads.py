@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import shutil
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import BinaryIO, Optional, Protocol
 
 from doomdeck.domain.downloads import DownloadPolicy, DownloadVerification
 from doomdeck.domain.models import DoomDeckError
 
 DEFAULT_USER_AGENT = "doomdeck"
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+class ReadableStream(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
 
 
 def sha256_file(path: Path) -> str:
@@ -37,6 +41,37 @@ def verify_download(path: Path, url: str, verification: DownloadVerification) ->
     verification.verify(path, url, sha256=sha256, md5=md5)
 
 
+def _content_length(response: object) -> int | None:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw_value = headers.get("Content-Length")
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _copy_response_bounded(response: ReadableStream, dest_handle: BinaryIO, url: str, max_bytes: int | None) -> None:
+    content_length = _content_length(response)
+    if max_bytes is not None and content_length is not None and content_length > max_bytes:
+        raise DoomDeckError(
+            f"Download for {url} exceeds maximum allowed size: expected at most {max_bytes} bytes, got {content_length} bytes"
+        )
+
+    total = 0
+    while True:
+        chunk = response.read(DOWNLOAD_CHUNK_SIZE)
+        if not chunk:
+            return
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise DoomDeckError(f"Download for {url} exceeds maximum allowed size: expected at most {max_bytes} bytes")
+        dest_handle.write(chunk)
+
+
 def download_url(
     url: str,
     dest: Path,
@@ -48,6 +83,7 @@ def download_url(
     expected_size: Optional[int] = None,
     expected_sha256: Optional[str] = None,
     expected_md5: Optional[str] = None,
+    max_bytes: Optional[int] = None,
     user_agent: str = DEFAULT_USER_AGENT,
 ) -> Path:
     policy = DownloadPolicy.for_hosts(allowed_hosts)
@@ -71,10 +107,11 @@ def download_url(
         request_headers.update(headers)
     request = urllib.request.Request(url, headers=request_headers)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
+    max_allowed_bytes = max_bytes if max_bytes is not None else expected_size
     try:
         # URL policy is validated before opening the request.
         with urllib.request.urlopen(request, timeout=60) as response, tmp.open("wb") as handle:  # nosec B310
-            shutil.copyfileobj(response, handle)
+            _copy_response_bounded(response, handle, url, max_allowed_bytes)
         verify_download(tmp, url, verification)
         tmp.replace(dest)
     except DoomDeckError:

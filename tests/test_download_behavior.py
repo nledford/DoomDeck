@@ -33,6 +33,32 @@ def fake_urlopen(payload: bytes) -> Any:
     return open_request
 
 
+@dataclass
+class FakeHeaderResponse:
+    payload: bytes
+    headers: dict[str, str]
+
+    def __post_init__(self) -> None:
+        self._stream = io.BytesIO(self.payload)
+
+    def __enter__(self) -> "FakeHeaderResponse":
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
+
+
+def fake_header_urlopen(payload: bytes, headers: dict[str, str]) -> Any:
+    def open_request(_request: object, timeout: int) -> FakeHeaderResponse:
+        assert timeout == 60
+        return FakeHeaderResponse(payload, headers)
+
+    return open_request
+
+
 def test_download_url_rejects_non_https_urls(tmp_path: Path) -> None:
     with pytest.raises(DoomDeckError, match="must use https"):
         download_url(
@@ -70,6 +96,45 @@ def test_download_url_verifies_size_and_sha256(tmp_path: Path) -> None:
         )
 
     assert downloaded.read_bytes() == payload
+
+
+def test_download_url_rejects_oversized_content_length_before_copying(tmp_path: Path) -> None:
+    dest = tmp_path / "file.pk3"
+
+    with patch(
+        "doomdeck.infrastructure.downloads.urllib.request.urlopen",
+        side_effect=fake_header_urlopen(b"downloaded bytes", {"Content-Length": "16"}),
+    ):
+        with pytest.raises(DoomDeckError, match="exceeds maximum allowed size"):
+            download_url(
+                "https://example.test/file.pk3",
+                dest,
+                dry_run=False,
+                logger=logging.getLogger("test"),
+                allowed_hosts={"example.test"},
+                expected_size=15,
+            )
+
+    assert not dest.exists()
+    assert not (tmp_path / "file.pk3.tmp").exists()
+
+
+def test_download_url_aborts_streams_that_exceed_expected_size(tmp_path: Path) -> None:
+    dest = tmp_path / "file.pk3"
+
+    with patch("doomdeck.infrastructure.downloads.urllib.request.urlopen", side_effect=fake_urlopen(b"too many bytes")):
+        with pytest.raises(DoomDeckError, match="exceeds maximum allowed size"):
+            download_url(
+                "https://example.test/file.pk3",
+                dest,
+                dry_run=False,
+                logger=logging.getLogger("test"),
+                allowed_hosts={"example.test"},
+                expected_size=3,
+            )
+
+    assert not dest.exists()
+    assert not (tmp_path / "file.pk3.tmp").exists()
 
 
 def test_download_url_removes_partial_file_after_checksum_failure(tmp_path: Path) -> None:
