@@ -22,9 +22,9 @@ The Justfile runs `uv` from your `PATH` by default. If `uv` is not on your `PATH
 
 ## Project Layout
 
-- `src/doomdeck/domain/` contains domain models, Doom/Steam Deck defaults, path layout, and WAD naming policy.
-- `src/doomdeck/application/` contains application services, such as Doom Runner options generation.
-- `src/doomdeck/infrastructure/` contains file format and integration helpers.
+- `src/doomdeck/domain/` contains domain models, Doom/Steam Deck defaults, path layout, WAD naming policy, download policy, and managed mod identity.
+- `src/doomdeck/application/` contains application services, such as preset manifest generation, WAD discovery, and Doom Runner options generation.
+- `src/doomdeck/infrastructure/` contains file format and integration helpers, including downloads, archives, GitHub API validation, and Steam shortcuts.
 - `src/doomdeck/cli.py` contains the CLI orchestration and user-facing install/validate flows.
 - `tests/` contains behavior-focused pytest tests.
 

@@ -381,6 +381,14 @@ pwads/
 
 DoomDeck does not create a preset for these downloads. Doom Runner already points its map directory at `pwads/`, so the extracted WAD can be selected inside an existing preset.
 
+## Safety Boundaries
+
+DoomDeck downloads executable tools and mod archives only over HTTPS. For automatically discovered GitHub and ModDB downloads, DoomDeck also restricts the initial download host to the expected upstream service and verifies available size or checksum metadata before installing the payload.
+
+Explicit `--brutal-doom-url`, `--project-brutality-url`, `--doomrunner-asset-url`, and `--uzdoom-asset-url` values are still accepted, but they must use HTTPS. Prefer local file options when you need to install an artifact from another source you already inspected.
+
+Restore archives are intentionally strict. `doomdeck restore` only restores regular files and directories whose archive paths stay under the selected managed root parent. It rejects absolute paths, path traversal, links, and special file entries even if an older archive extractor would have accepted them.
+
 ## Troubleshooting
 
 Run validation first:
@@ -423,7 +431,7 @@ DoomDeck uses a `src/` package layout for PyPI-ready packaging:
 src/doomdeck/
 ```
 
-The CLI orchestration lives in `doomdeck.cli`. Core domain data, Steam Deck defaults, WAD naming policy, and managed path layout helpers live in `doomdeck.domain`. Application services such as WAD discovery and Doom Runner options generation live in `doomdeck.application`, while Steam and archive file format helpers live in `doomdeck.infrastructure`.
+The CLI orchestration lives in `doomdeck.cli`. Core domain data, Steam Deck defaults, WAD naming policy, download policy, managed mod identity, and managed path layout helpers live in `doomdeck.domain`. Application services such as WAD discovery, preset manifest generation, and Doom Runner options generation live in `doomdeck.application`, while Steam, download, and archive file format helpers live in `doomdeck.infrastructure`.
 
 Run the test suite with:
 
