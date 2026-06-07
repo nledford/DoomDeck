@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import html
 import json
 import logging
@@ -51,12 +50,16 @@ from doomdeck.application.doomrunner import (
     build_doomrunner_options,
     doomrunner_options_paths,
 )
+from doomdeck.application.presets import build_preset_manifest
+from doomdeck.application.presets import choose_default_preset_iwad as _choose_default_preset_iwad
 from doomdeck.application.validation import add_validation_item, format_validation_report, validation_has_failures
 from doomdeck.application.wads import find_wads_in_install
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
+from doomdeck.domain.downloads import DownloadPolicy
 from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem
+from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, InstalledModMetadata
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
-from doomdeck.domain.wads import DEFAULT_PRESET_IWADS, IWAD_CANONICAL_NAMES, iwad_dest_name
+from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
 from doomdeck.infrastructure.archives import (
     choose_payload_member,
     common_zip_toplevel,
@@ -66,6 +69,8 @@ from doomdeck.infrastructure.archives import (
     zip_contains_markers,
 )
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
+from doomdeck.infrastructure.downloads import download_url as _download_url
+from doomdeck.infrastructure.downloads import sha256_file
 from doomdeck.infrastructure.github_api import (
     validate_github_release_payload,
     validate_github_repository_payload,
@@ -82,11 +87,11 @@ DEFAULT_ROOT = Path.home() / "Games" / "Doom"
 SCRIPT_VERSION = "2026.05.31"
 
 MODDB_BASE_URL = "https://www.moddb.com"
-BRUTAL_DOOM_ALIAS = "brutal-doom.pk3"
+BRUTAL_DOOM_ALIAS = BRUTAL_DOOM_MOD.alias
 BRUTAL_DOOM_MODDB_URL = "https://www.moddb.com/mods/brutal-doom"
 BRUTAL_DOOM_DOWNLOADS_URL = "https://www.moddb.com/mods/brutal-doom/downloads"
 PROJECT_BRUTALITY_REPO = "pa1nki113r/Project_Brutality"
-PROJECT_BRUTALITY_ALIAS = "project-brutality.pk3"
+PROJECT_BRUTALITY_ALIAS = PROJECT_BRUTALITY_MOD.alias
 MODDB_WAD_PAYLOAD_SUFFIXES = {".wad", ".pk3"}
 UZDOOM_STEAM_DECK_GLOBAL_SETTINGS = [
     ("vid_fullscreen", "true"),
@@ -196,22 +201,6 @@ def script_has_execve_shebang(path: Path) -> bool:
             return handle.read(2) == b"#!"
     except OSError:
         return False
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def md5_file(path: Path) -> str:
-    digest = hashlib.md5(usedforsecurity=False)
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def files_equal(a: Path, b: Path) -> bool:
@@ -419,12 +408,15 @@ def copy_addon_wads(wads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: lo
 
 
 def github_request_json(url: str) -> Any:
+    DownloadPolicy.for_hosts({"api.github.com"}).validate_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": GITHUB_USER_AGENT, "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    # URL policy is validated before opening the request.
+    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_text_url(url: str, logger: Optional[logging.Logger] = None) -> str:
+def fetch_text_url(url: str, logger: Optional[logging.Logger] = None, allowed_hosts: Optional[set[str]] = None) -> str:
+    DownloadPolicy.for_hosts(allowed_hosts).validate_url(url)
     if logger:
         logger.debug("Fetch metadata page: %s", url)
     request = urllib.request.Request(
@@ -434,7 +426,8 @@ def fetch_text_url(url: str, logger: Optional[logging.Logger] = None) -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    # URL policy is validated before opening the request.
+    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
         content_type = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(content_type, errors="replace")
 
@@ -522,28 +515,24 @@ def download_url(
     logger: logging.Logger,
     force: bool = False,
     headers: Optional[dict[str, str]] = None,
+    allowed_hosts: Optional[set[str]] = None,
+    expected_size: Optional[int] = None,
+    expected_sha256: Optional[str] = None,
+    expected_md5: Optional[str] = None,
 ) -> Path:
-    if dest.exists() and not force:
-        logger.info("Download already exists: %s", dest)
-        return dest
-    logger.info("Download: %s -> %s", url, dest)
-    if dry_run:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    request_headers = {"User-Agent": GITHUB_USER_AGENT}
-    if headers:
-        request_headers.update(headers)
-    request = urllib.request.Request(url, headers=request_headers)
-    tmp = dest.with_suffix(dest.suffix + ".tmp")
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response, tmp.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
-        tmp.replace(dest)
-    except urllib.error.URLError as exc:
-        if tmp.exists():
-            tmp.unlink()
-        raise DoomDeckError(f"Failed to download {url}: {exc}") from exc
-    return dest
+    return _download_url(
+        url,
+        dest,
+        dry_run,
+        logger,
+        force=force,
+        headers=headers,
+        allowed_hosts=allowed_hosts,
+        expected_size=expected_size,
+        expected_sha256=expected_sha256,
+        expected_md5=expected_md5,
+        user_agent=GITHUB_USER_AGENT,
+    )
 
 
 def safe_download_name(value: str, fallback: str) -> str:
@@ -569,12 +558,24 @@ def install_appimage_from_github(
     if explicit_url:
         asset_name = safe_download_name(explicit_url, f"{repo.split('/')[-1]}.AppImage")
         url = explicit_url
+        expected_size = None
+        allowed_hosts = None
     else:
         asset = select_release_asset(repo, args.prefer_legacy_appimage, logger)
         asset_name = asset.name
         url = asset.url
+        expected_size = asset.size
+        allowed_hosts = {"github.com"}
     download_dest = dirs.downloads / asset_name
-    downloaded = download_url(url, download_dest, args.dry_run, logger, force=args.force_download)
+    downloaded = download_url(
+        url,
+        download_dest,
+        args.dry_run,
+        logger,
+        force=args.force_download,
+        allowed_hosts=allowed_hosts,
+        expected_size=expected_size,
+    )
     if not args.dry_run and not downloaded.exists():
         raise DoomDeckError(f"Expected downloaded asset at {downloaded}")
     replace_file_safely(downloaded, target, dirs.backups, args.dry_run, logger)
@@ -649,13 +650,12 @@ def write_mod_zip_as_pk3(
                 tmp.unlink()
             raise
 
-    metadata = {
-        "name": "Project Brutality",
-        "installed": str(dest),
-        "source_sha256": source_sha,
-        **source,
-        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
-    }
+    metadata = InstalledModMetadata(
+        mod=PROJECT_BRUTALITY_MOD,
+        installed=dest,
+        source_sha256=source_sha,
+        source=source,
+    ).as_json_object()
     atomic_write_text(metadata_path, json.dumps(metadata, indent=2) + "\n", dry_run, logger)
     return dest
 
@@ -716,8 +716,8 @@ def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
 
 
 def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: bool, logger: logging.Logger) -> Optional[Path]:
-    canonical = dirs.project_brutality / PROJECT_BRUTALITY_ALIAS
-    metadata_path = dirs.project_brutality / "project-brutality.json"
+    canonical = PROJECT_BRUTALITY_MOD.alias_path(dirs.project_brutality)
+    metadata_path = PROJECT_BRUTALITY_MOD.metadata_path(dirs.project_brutality)
     if args.project_brutality_file:
         src = expand_path(args.project_brutality_file)
         if not src.exists():
@@ -753,12 +753,24 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         url = args.project_brutality_url
         asset_name = safe_download_name(url, "Project_Brutality.zip")
         tag_name = "explicit-url"
+        expected_size = None
+        allowed_hosts = None
     else:
         asset = select_project_brutality_download(logger)
         url = asset.url
         asset_name = safe_download_name(asset.name, "Project_Brutality.zip")
         tag_name = asset.tag_name
-    downloaded = download_url(url, dirs.downloads / asset_name, dry_run, logger, force=args.force_download)
+        expected_size = asset.size
+        allowed_hosts = {"api.github.com", "github.com"}
+    downloaded = download_url(
+        url,
+        dirs.downloads / asset_name,
+        dry_run,
+        logger,
+        force=args.force_download,
+        allowed_hosts=allowed_hosts,
+        expected_size=expected_size,
+    )
     return write_mod_zip_as_pk3(
         downloaded,
         canonical,
@@ -1091,14 +1103,9 @@ def install_moddb_wad_urls(args: argparse.Namespace, dirs: Dirs, dry_run: bool, 
             logger,
             force=args.force_download,
             headers={"Referer": selected.page_url},
+            allowed_hosts={"moddb.com"},
+            expected_md5=selected.md5 or None,
         )
-        if selected.md5 and downloaded.exists():
-            actual_md5 = md5_file(downloaded)
-            if actual_md5.lower() != selected.md5.lower():
-                raise DoomDeckError(
-                    f"ModDB WAD download checksum mismatch for {selected.filename}: "
-                    f"expected {selected.md5}, got {actual_md5}"
-                )
         installed.extend(install_moddb_wad_archive(downloaded, dirs.pwads, dirs.backups, dry_run, logger))
     return installed
 
@@ -1159,15 +1166,14 @@ def install_brutal_doom_archive(
     else:
         raise DoomDeckError(f"Brutal Doom file should be a .pk3/.wad/.zip, got: {src}")
 
-    metadata = {
-        "name": "Brutal Doom",
-        "installed": str(dest),
-        "installed_sha256": sha256_file(dest),
-        "payload_member": payload_member,
-        "source_sha256": source_sha,
-        **source,
-        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
-    }
+    metadata = InstalledModMetadata(
+        mod=BRUTAL_DOOM_MOD,
+        installed=dest,
+        installed_sha256=sha256_file(dest),
+        payload_member=payload_member,
+        source_sha256=source_sha,
+        source=source,
+    ).as_json_object()
     atomic_write_text(metadata_path, json.dumps(metadata, indent=2) + "\n", dry_run, logger)
     return dest
 
@@ -1347,8 +1353,8 @@ bind 7 slot 7
 
 
 def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, logger: logging.Logger) -> Optional[Path]:
-    canonical = dirs.brutal / BRUTAL_DOOM_ALIAS
-    metadata_path = dirs.brutal / "brutal-doom.json"
+    canonical = BRUTAL_DOOM_MOD.alias_path(dirs.brutal)
+    metadata_path = BRUTAL_DOOM_MOD.metadata_path(dirs.brutal)
 
     def alias_existing_candidate() -> Optional[Path]:
         candidates = sorted(
@@ -1452,6 +1458,8 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
         logger,
         force=args.force_download or not already_current,
         headers={"Referer": selected.page_url},
+        allowed_hosts={"moddb.com"},
+        expected_md5=selected.md5 or None,
     )
     return install_brutal_doom_archive(
         downloaded,
@@ -1486,87 +1494,11 @@ def create_or_replace_symlink_or_copy(src: Path, dest: Path, dry_run: bool, logg
 
 
 def choose_default_preset_iwad(dirs: Dirs) -> Optional[Path]:
-    for iwad_name in DEFAULT_PRESET_IWADS:
-        iwad_path = dirs.iwads / iwad_dest_name(iwad_name)
-        if iwad_path.exists():
-            return iwad_path
-    return None
+    return _choose_default_preset_iwad(dirs)
 
 
 def generate_preset_manifest(dirs: Dirs, brutal_path: Optional[Path], project_brutality_path: Optional[Path]) -> dict[str, Any]:
-    presets: list[dict[str, Any]] = []
-    default_iwad = choose_default_preset_iwad(dirs)
-    if default_iwad:
-        presets.extend(
-            [
-                {
-                    "name": "Vanilla Doom",
-                    "category": "Vanilla",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [],
-                    "config": str(dirs.uzdoom_config / "classic" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "classic" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Vanilla_Doom.sh"),
-                    "notes": "Classic-style UZDoom launch. Change the selected IWAD in Doom Runner to switch Doom, Doom II, TNT, or Plutonia.",
-                },
-                {
-                    "name": "UZDoom",
-                    "category": "UZDoom",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "UZDoom.sh"),
-                    "notes": "UZDoom without gameplay mods. Change the selected IWAD in Doom Runner to switch base games.",
-                },
-                {
-                    "name": "Brutal Doom",
-                    "category": "Brutal Doom",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [str(brutal_path or (dirs.brutal / BRUTAL_DOOM_ALIAS))],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Brutal_Doom.sh"),
-                    "missing_hint": "Rerun install to check ModDB, or use --brutal-doom-file/--brutal-doom-url.",
-                    "notes": f"Requires mods/brutal-doom/{BRUTAL_DOOM_ALIAS}. Change the selected IWAD in Doom Runner to switch base games.",
-                },
-                {
-                    "name": "Project Brutality",
-                    "category": "Project Brutality",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [str(project_brutality_path or (dirs.project_brutality / PROJECT_BRUTALITY_ALIAS))],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Project_Brutality.sh"),
-                    "missing_hint": "Rerun install to download Project Brutality, or use --project-brutality-file /path/to/Project_Brutality.pk3.",
-                    "notes": "Downloads Project Brutality from GitHub and installs it as mods/project-brutality/project-brutality.pk3.",
-                },
-            ]
-        )
-    return {
-        "schema": "doom-deck-setup/preset-manifest/v1",
-        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
-        "warning": "This is a stable manifest generated by DoomDeck. Doom Runner's live options.json is generated separately.",
-        "root": str(dirs.root),
-        "engine": {
-            "name": "UZDoom",
-            "executable": str(dirs.uzdoom / "uzdoom.sh"),
-            "family": "UZDoom/ZDoom",
-            "config_directory": str(dirs.uzdoom_config),
-            "data_directory": str(dirs.root),
-        },
-        "iwad_directory": str(dirs.iwads),
-        "pwad_directory": str(dirs.pwads),
-        "mod_directories": {
-            "brutal_doom": str(dirs.brutal),
-            "project_brutality": str(dirs.project_brutality),
-        },
-        "presets": presets,
-    }
+    return build_preset_manifest(dirs, brutal_path, project_brutality_path)
 
 
 def is_generated_preset_launcher(path: Path) -> bool:
@@ -1686,7 +1618,9 @@ def write_docs(
     dry_run: bool,
     logger: logging.Logger,
 ) -> None:
-    layout = f"""# Doom Deck Setup Layout
+    # Generated Markdown, not a SQL expression.
+    layout = (  # nosec B608
+        f"""# Doom Deck Setup Layout
 
 Generated by `doomdeck`.
 
@@ -1708,6 +1642,7 @@ Generated by `doomdeck`.
 └── logs/                          Script logs
 ```
 """
+    )
     steam_input = f"""# Steam Input Profiles for Doom Runner / UZDoom
 
 The generated UZDoom configs enable joystick input and bind common Steam Deck gamepad buttons directly. Steam's standard Gamepad layout should work for the generated presets; use Steam's controller configurator only if you want a custom layout.
