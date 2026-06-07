@@ -21,20 +21,72 @@ class ManagedMod:
 
 
 @dataclasses.dataclass(frozen=True)
+class ModSource:
+    """Domain-facing provenance for a managed mod artifact."""
+
+    source_type: str
+    values: Mapping[str, str] = dataclasses.field(default_factory=dict)
+
+    @classmethod
+    def local_file(cls, path: Path) -> "ModSource":
+        return cls("local_file", {"source_path": str(path)})
+
+    @classmethod
+    def local_existing(cls, path: Path) -> "ModSource":
+        return cls("local_existing", {"source_path": str(path)})
+
+    @classmethod
+    def explicit_url(cls, url: str, filename: str) -> "ModSource":
+        return cls("explicit_url", {"source_url": url, "source_filename": filename})
+
+    @classmethod
+    def github(cls, url: str, tag: str) -> "ModSource":
+        return cls("github", {"source_url": url, "source_tag": tag})
+
+    @classmethod
+    def moddb(
+        cls,
+        *,
+        channel: str,
+        title: str,
+        page_url: str,
+        filename: str,
+        updated: str,
+        md5: str,
+        download_url: str = "",
+    ) -> "ModSource":
+        values = {
+            "source_channel": channel,
+            "source_title": title,
+            "source_page_url": page_url,
+            "source_filename": filename,
+            "source_updated": updated,
+            "source_md5": md5,
+        }
+        if download_url:
+            values["source_download_url"] = download_url
+        return cls("moddb", values)
+
+    def as_metadata(self) -> dict[str, str]:
+        return {"source_type": self.source_type, **{key: str(value) for key, value in self.values.items()}}
+
+
+@dataclasses.dataclass(frozen=True)
 class InstalledModMetadata:
     mod: ManagedMod
     installed: Path
     source_sha256: str
-    source: Mapping[str, str]
+    source: Mapping[str, str] | ModSource
     installed_sha256: str | None = None
     payload_member: str = ""
 
     def as_json_object(self) -> dict[str, str]:
+        source = self.source.as_metadata() if isinstance(self.source, ModSource) else dict(self.source)
         metadata = {
             "name": self.mod.name,
             "installed": str(self.installed),
             "source_sha256": self.source_sha256,
-            **self.source,
+            **source,
             "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
         }
         if self.installed_sha256 is not None:

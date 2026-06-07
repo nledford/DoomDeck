@@ -31,11 +31,9 @@ import os
 import platform
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -50,6 +48,11 @@ from doomdeck.application.doomrunner import (
     build_doomrunner_options,
     doomrunner_options_paths,
 )
+from doomdeck.application.managed_mods import (
+    install_brutal_doom_archive,
+    install_project_brutality_archive,
+    metadata_matches,
+)
 from doomdeck.application.presets import build_preset_manifest
 from doomdeck.application.presets import choose_default_preset_iwad as _choose_default_preset_iwad
 from doomdeck.application.validation import add_validation_item, format_validation_report, validation_has_failures
@@ -57,11 +60,10 @@ from doomdeck.application.wads import find_wads_in_install
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
 from doomdeck.domain.downloads import DownloadPolicy
 from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem
-from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, InstalledModMetadata
+from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, ModSource
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
 from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
 from doomdeck.infrastructure.archives import (
-    choose_payload_member,
     common_zip_toplevel,
     normalized_zip_member_name,
     safe_extract_tar,
@@ -70,7 +72,13 @@ from doomdeck.infrastructure.archives import (
 )
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
 from doomdeck.infrastructure.downloads import download_url as _download_url
-from doomdeck.infrastructure.downloads import sha256_file
+from doomdeck.infrastructure.files import (
+    atomic_write_bytes,
+    atomic_write_text,
+    backup_path,
+    files_equal,
+    replace_file_safely,
+)
 from doomdeck.infrastructure.github_api import (
     validate_github_release_payload,
     validate_github_repository_payload,
@@ -163,82 +171,12 @@ def ensure_dir(path: Path, dry_run: bool, logger: logging.Logger) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def atomic_write_text(path: Path, content: str, dry_run: bool, logger: logging.Logger, mode: int = 0o644) -> None:
-    logger.info("Write file: %s", path)
-    if dry_run:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-    os.chmod(tmp_path, mode)
-    tmp_path.replace(path)
-
-
-def atomic_write_bytes(path: Path, content: bytes, dry_run: bool, logger: logging.Logger, mode: int = 0o644) -> None:
-    logger.info("Write file: %s", path)
-    if dry_run:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("wb", dir=str(path.parent), delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-    os.chmod(tmp_path, mode)
-    tmp_path.replace(path)
-
-
-def make_executable(path: Path, dry_run: bool, logger: logging.Logger) -> None:
-    logger.info("Mark executable: %s", path)
-    if dry_run:
-        return
-    current = path.stat().st_mode
-    path.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
 def script_has_execve_shebang(path: Path) -> bool:
     try:
         with path.open("rb") as handle:
             return handle.read(2) == b"#!"
     except OSError:
         return False
-
-
-def files_equal(a: Path, b: Path) -> bool:
-    if not a.exists() or not b.exists():
-        return False
-    if a.stat().st_size != b.stat().st_size:
-        return False
-    return sha256_file(a) == sha256_file(b)
-
-
-def backup_path(path: Path, backups_dir: Path, dry_run: bool, logger: logging.Logger, label: Optional[str] = None) -> Optional[Path]:
-    if not path.exists():
-        return None
-    label_text = label or path.name
-    dest = backups_dir / f"{label_text}.{now_stamp()}"
-    logger.info("Back up %s -> %s", path, dest)
-    if dry_run:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_dir():
-        shutil.copytree(path, dest, symlinks=True)
-    else:
-        shutil.copy2(path, dest)
-    return dest
-
-
-def replace_file_safely(src: Path, dest: Path, backups_dir: Path, dry_run: bool, logger: logging.Logger) -> None:
-    if dest.exists() and files_equal(src, dest):
-        logger.info("Already current: %s", dest)
-        make_executable(dest, dry_run, logger)
-        return
-    if dest.exists():
-        backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
-    logger.info("Install file: %s -> %s", src, dest)
-    if not dry_run:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-    make_executable(dest, dry_run, logger)
 
 
 def run_command(
@@ -582,84 +520,6 @@ def install_appimage_from_github(
     return target
 
 
-def metadata_matches(metadata_path: Path, expected: dict[str, str], keys: Iterable[str]) -> bool:
-    if not metadata_path.exists():
-        return False
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-    return all(str(metadata.get(key, "")) == str(expected.get(key, "")) for key in keys)
-
-
-def write_mod_zip_as_pk3(
-    src: Path,
-    dest: Path,
-    backups_dir: Path,
-    metadata_path: Path,
-    dry_run: bool,
-    logger: logging.Logger,
-    source: dict[str, str],
-    force: bool = False,
-) -> Path:
-    if not src.exists() and not dry_run:
-        raise DoomDeckError(f"Project Brutality download is missing: {src}")
-    source_sha = sha256_file(src) if src.exists() else ""
-    if dest.exists() and metadata_path.exists() and not force:
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            metadata = {}
-        if metadata.get("source_sha256") == source_sha:
-            logger.info("Project Brutality already current: %s", dest)
-            return dest
-
-    logger.info("Install Project Brutality archive: %s -> %s", src, dest)
-    if dry_run:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
-
-    if src.suffix.lower() == ".wad" or not zipfile.is_zipfile(src):
-        shutil.copy2(src, dest)
-    else:
-        tmp = dest.with_suffix(dest.suffix + ".tmp")
-        try:
-            with zipfile.ZipFile(src) as source_zip:
-                infos = [info for info in source_zip.infolist() if not info.is_dir()]
-                if not infos:
-                    raise DoomDeckError(f"Project Brutality archive has no files: {src}")
-                prefix = common_zip_toplevel(info.filename for info in infos)
-                with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as out_zip:
-                    written = 0
-                    for info in infos:
-                        new_name = normalized_zip_member_name(info.filename, prefix)
-                        if not new_name:
-                            continue
-                        out_info = zipfile.ZipInfo(new_name, date_time=info.date_time)
-                        out_info.external_attr = info.external_attr
-                        out_info.compress_type = zipfile.ZIP_DEFLATED
-                        out_zip.writestr(out_info, source_zip.read(info))
-                        written += 1
-                    if written == 0:
-                        raise DoomDeckError(f"Project Brutality archive had no safe file entries: {src}")
-            tmp.replace(dest)
-        except Exception:
-            if tmp.exists():
-                tmp.unlink()
-            raise
-
-    metadata = InstalledModMetadata(
-        mod=PROJECT_BRUTALITY_MOD,
-        installed=dest,
-        source_sha256=source_sha,
-        source=source,
-    ).as_json_object()
-    atomic_write_text(metadata_path, json.dumps(metadata, indent=2) + "\n", dry_run, logger)
-    return dest
-
-
 def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
     try:
         release_payload = github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/releases/latest")
@@ -724,14 +584,14 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
             raise DoomDeckError(f"--project-brutality-file does not exist: {src}")
         if src.suffix.lower() not in {".pk3", ".wad", ".zip"}:
             raise DoomDeckError(f"Project Brutality file should be a .pk3/.wad/.zip, got: {src}")
-        return write_mod_zip_as_pk3(
+        return install_project_brutality_archive(
             src,
             canonical,
             dirs.backups,
             metadata_path,
             dry_run,
             logger,
-            {"source_type": "local_file", "source_path": str(src)},
+            ModSource.local_file(src),
             force=True,
         )
 
@@ -771,14 +631,14 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         allowed_hosts=allowed_hosts,
         expected_size=expected_size,
     )
-    return write_mod_zip_as_pk3(
+    return install_project_brutality_archive(
         downloaded,
         canonical,
         dirs.backups,
         metadata_path,
         dry_run,
         logger,
-        {"source_type": "github", "source_url": url, "source_tag": tag_name},
+        ModSource.github(url=url, tag=tag_name),
         force=args.force_download,
     )
 
@@ -1110,74 +970,6 @@ def install_moddb_wad_urls(args: argparse.Namespace, dirs: Dirs, dry_run: bool, 
     return installed
 
 
-def install_brutal_doom_archive(
-    src: Path,
-    dest: Path,
-    backups_dir: Path,
-    metadata_path: Path,
-    dry_run: bool,
-    logger: logging.Logger,
-    source: dict[str, str],
-    force: bool = False,
-) -> Path:
-    if not src.exists() and not dry_run:
-        raise DoomDeckError(f"Brutal Doom download is missing: {src}")
-    source_sha = sha256_file(src) if src.exists() else ""
-    if dest.exists() and metadata_path.exists() and not force:
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            metadata = {}
-        if metadata.get("source_sha256") == source_sha:
-            logger.info("Brutal Doom already current: %s", dest)
-            return dest
-
-    logger.info("Install Brutal Doom archive: %s -> %s", src, dest)
-    if dry_run:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() or dest.is_symlink():
-        backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
-
-    payload_member = ""
-    if src.suffix.lower() in {".pk3", ".wad"}:
-        tmp = dest.with_suffix(dest.suffix + ".tmp")
-        shutil.copy2(src, tmp)
-        tmp.replace(dest)
-    elif zipfile.is_zipfile(src):
-        tmp = dest.with_suffix(dest.suffix + ".tmp")
-        try:
-            with zipfile.ZipFile(src) as source_zip:
-                infos = [info for info in source_zip.infolist() if not info.is_dir()]
-                chosen = choose_payload_member(infos)
-                if chosen:
-                    payload_member = chosen.filename
-                    with source_zip.open(chosen) as source_handle, tmp.open("wb") as dest_handle:
-                        shutil.copyfileobj(source_handle, dest_handle)
-                elif zip_contains_markers(src, {"gameinfo.txt"}):
-                    shutil.copy2(src, tmp)
-                else:
-                    raise DoomDeckError(f"Brutal Doom archive has no .pk3/.wad payload: {src}")
-            tmp.replace(dest)
-        except Exception:
-            if tmp.exists():
-                tmp.unlink()
-            raise
-    else:
-        raise DoomDeckError(f"Brutal Doom file should be a .pk3/.wad/.zip, got: {src}")
-
-    metadata = InstalledModMetadata(
-        mod=BRUTAL_DOOM_MOD,
-        installed=dest,
-        installed_sha256=sha256_file(dest),
-        payload_member=payload_member,
-        source_sha256=source_sha,
-        source=source,
-    ).as_json_object()
-    atomic_write_text(metadata_path, json.dumps(metadata, indent=2) + "\n", dry_run, logger)
-    return dest
-
-
 def write_wrappers(dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
     doomrunner_appimage = dirs.doomrunner / "DoomRunner.AppImage"
     doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
@@ -1375,7 +1167,7 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
             metadata_path,
             dry_run,
             logger,
-            {"source_type": "local_existing", "source_path": str(candidates[0])},
+            ModSource.local_existing(candidates[0]),
             force=False,
         )
         return canonical
@@ -1393,7 +1185,7 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
             metadata_path,
             dry_run,
             logger,
-            {"source_type": "local_file", "source_path": str(src)},
+            ModSource.local_file(src),
             force=True,
         )
 
@@ -1418,11 +1210,7 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
     if args.brutal_doom_url:
         url = args.brutal_doom_url
         asset_name = safe_download_name(url, "brutal-doom.zip")
-        source = {
-            "source_type": "explicit_url",
-            "source_url": url,
-            "source_filename": asset_name,
-        }
+        source = ModSource.explicit_url(url, asset_name)
         downloaded = download_url(url, dirs.downloads / asset_name, dry_run, logger, force=args.force_download)
         return install_brutal_doom_archive(downloaded, canonical, dirs.backups, metadata_path, dry_run, logger, source, force=args.force_download)
 
@@ -1435,17 +1223,16 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
         logger.warning("Could not install Brutal Doom automatically: %s", exc)
         return None
 
-    source = {
-        "source_type": "moddb",
-        "source_channel": args.brutal_doom_channel,
-        "source_title": selected.title,
-        "source_page_url": selected.page_url,
-        "source_filename": selected.filename,
-        "source_updated": selected.updated,
-        "source_md5": selected.md5,
-    }
+    source = ModSource.moddb(
+        channel=args.brutal_doom_channel,
+        title=selected.title,
+        page_url=selected.page_url,
+        filename=selected.filename,
+        updated=selected.updated,
+        md5=selected.md5,
+    )
     compare_keys = ["source_type", "source_channel", "source_page_url", "source_filename", "source_updated", "source_md5"]
-    already_current = canonical.exists() and metadata_matches(metadata_path, source, compare_keys)
+    already_current = canonical.exists() and metadata_matches(metadata_path, source.as_metadata(), compare_keys)
     if already_current and not args.force_download:
         logger.info("Brutal Doom already current from ModDB: %s", canonical)
         return canonical
@@ -1468,7 +1255,15 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
         metadata_path,
         dry_run,
         logger,
-        {**source, "source_download_url": selected.download_url},
+        ModSource.moddb(
+            channel=args.brutal_doom_channel,
+            title=selected.title,
+            page_url=selected.page_url,
+            filename=selected.filename,
+            updated=selected.updated,
+            md5=selected.md5,
+            download_url=selected.download_url,
+        ),
         force=args.force_download or not already_current,
     )
 
