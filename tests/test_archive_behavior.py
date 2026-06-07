@@ -70,6 +70,59 @@ def test_safe_tar_extraction_rejects_members_outside_destination(tmp_path) -> No
             safe_extract_tar(archive, tmp_path / "restore")
 
 
+def test_safe_tar_extraction_rejects_absolute_member_paths(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        payload = b"owned"
+        member = tarfile.TarInfo("/tmp/outside.txt")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(DoomDeckError, match="Unsafe absolute path"):
+            safe_extract_tar(archive, tmp_path / "restore")
+
+
+def test_safe_tar_extraction_rejects_link_members(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        member = tarfile.TarInfo("Doom/link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "../outside.txt"
+        archive.addfile(member)
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(DoomDeckError, match="Unsafe link"):
+            safe_extract_tar(archive, tmp_path / "restore")
+
+
+def test_safe_tar_extraction_rejects_special_file_members(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        member = tarfile.TarInfo("Doom/fifo")
+        member.type = tarfile.FIFOTYPE
+        archive.addfile(member)
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(DoomDeckError, match="Unsafe special file"):
+            safe_extract_tar(archive, tmp_path / "restore")
+
+
+def test_safe_tar_extraction_accepts_regular_backup_members(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    restore_dir = tmp_path / "restore"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        payload = b"iwad"
+        member = tarfile.TarInfo("Doom/iwads/DOOM2.WAD")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        safe_extract_tar(archive, restore_dir)
+
+    assert (restore_dir / "Doom" / "iwads" / "DOOM2.WAD").read_bytes() == b"iwad"
+
+
 def test_tree_backup_archive_excludes_nested_backup_directory(tmp_path) -> None:
     root = tmp_path / "Doom"
     backups = root / "backups"

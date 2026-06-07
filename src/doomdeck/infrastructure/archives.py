@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tarfile
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Iterable, Optional
 
 from doomdeck.domain.models import DoomDeckError
@@ -102,8 +104,30 @@ def write_tree_tar_gz(
 
 def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
     dest = dest.resolve()
+    validated: list[tuple[tarfile.TarInfo, Path]] = []
     for member in tar.getmembers():
-        member_path = (dest / member.name).resolve()
-        if not str(member_path).startswith(str(dest) + os.sep):
+        parts = PurePosixPath(member.name).parts
+        if PurePosixPath(member.name).is_absolute():
+            raise DoomDeckError(f"Unsafe absolute path in tar archive: {member.name}")
+        if not parts or any(part in {"", ".", ".."} for part in parts):
             raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
-    tar.extractall(dest)
+        member_path = dest.joinpath(*parts).resolve()
+        if not path_is_or_is_under(member_path, dest):
+            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
+        if member.issym() or member.islnk():
+            raise DoomDeckError(f"Unsafe link in tar archive: {member.name}")
+        if not member.isfile() and not member.isdir():
+            raise DoomDeckError(f"Unsafe special file in tar archive: {member.name}")
+        validated.append((member, member_path))
+
+    for member, member_path in validated:
+        if member.isdir():
+            member_path.mkdir(parents=True, exist_ok=True)
+            continue
+        source = tar.extractfile(member)
+        if source is None:
+            raise DoomDeckError(f"Could not read tar archive member: {member.name}")
+        member_path.parent.mkdir(parents=True, exist_ok=True)
+        with source, member_path.open("wb") as dest_handle:
+            shutil.copyfileobj(source, dest_handle)
+        os.chmod(member_path, member.mode & 0o755)
