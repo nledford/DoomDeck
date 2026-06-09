@@ -35,10 +35,6 @@ classifiers = [
     "Topic :: Games/Entertainment",
     "Topic :: System :: Installation/Setup",
 ]
-dependencies = [
-    "pydantic>=2,<3",
-]
-
 [project.urls]
 Homepage = "https://github.com/nledford/DoomDeck"
 Repository = "https://github.com/nledford/DoomDeck"
