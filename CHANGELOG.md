@@ -6,6 +6,127 @@ DoomDeck uses Semantic Versioning and Conventional Commits. Release entries are 
 
 <!-- version list -->
 
+## v1.0.0 (2026-06-09)
+
+### Bug Fixes
+
+- Report invalid validation JSON shapes
+  ([`0b87112`](https://github.com/nledford/DoomDeck/commit/0b871123f477407710a8c490157432d0c9a59807))
+
+- **downloads**: Bound oversized responses
+  ([`efb924d`](https://github.com/nledford/DoomDeck/commit/efb924d8210dfe73eb248132ceca3ffc15fc7409))
+
+- **github**: Avoid pydantic runtime import
+  ([`221962b`](https://github.com/nledford/DoomDeck/commit/221962b8bd2bde159b574f8754e81a407c1c3e1e))
+
+- **restore**: Reject unsafe backup members
+  ([`50be11d`](https://github.com/nledford/DoomDeck/commit/50be11ddc5eb2ece20b8d2a0071badcc68a44418))
+
+### Build System
+
+- Add lint and type checks
+  ([`24f6d54`](https://github.com/nledford/DoomDeck/commit/24f6d543c8ef981a26fcab1d71254c5e896d11e6))
+
+- Add quality tooling dependencies
+  ([`ff25316`](https://github.com/nledford/DoomDeck/commit/ff253166e969009042e24cb17e0fe90a26a44b8e))
+
+- Enforce complexity checks
+  ([`33d8162`](https://github.com/nledford/DoomDeck/commit/33d8162aa1070cfedaff2c879b9612fcef575612))
+
+### Chores
+
+- Add local semantic release checks
+  ([`9bcc021`](https://github.com/nledford/DoomDeck/commit/9bcc0210b2cdf15304563919f91391540a615f2f))
+
+- Add quality analysis workflows
+  ([`c592858`](https://github.com/nledford/DoomDeck/commit/c592858ffc9556875264e33d77692a16557976e0))
+
+- Configure changelog generation
+  ([`7af4f0d`](https://github.com/nledford/DoomDeck/commit/7af4f0df803a9f254ec0668e9e6bc954309d9af5))
+
+- Ignore ruff cache
+  ([`da8d179`](https://github.com/nledford/DoomDeck/commit/da8d179e4372bd486d0939c60034e8cafe2f178e))
+
+- Sync release and tooling docs
+  ([`15b3c9a`](https://github.com/nledford/DoomDeck/commit/15b3c9a8fccfb84768b6c55daf4219b26004a6b2))
+
+### Continuous Integration
+
+- Add GitHub release workflow
+  ([`2e005ec`](https://github.com/nledford/DoomDeck/commit/2e005ec8037377fcc035db433b6f44a134457440))
+
+- Test supported Python versions
+  ([`7d499fa`](https://github.com/nledford/DoomDeck/commit/7d499fa04e82f20b066cda0c5b73da8c48d645a8))
+
+### Documentation
+
+- Add contributing guide
+  ([`9fc48e2`](https://github.com/nledford/DoomDeck/commit/9fc48e2b887351c590b6880d7af42ac2c2a97562))
+
+- Document home-relative Doom root
+  ([`2cc774f`](https://github.com/nledford/DoomDeck/commit/2cc774f544cd89bd912d6ca45a7670b4867609ec))
+
+- Document safety boundaries
+  ([`0c013d8`](https://github.com/nledford/DoomDeck/commit/0c013d82722dc5fea887e1013f916f08a823aad1))
+
+- Include Project Brutality controls
+  ([`88c303c`](https://github.com/nledford/DoomDeck/commit/88c303cba4ff563cecc8b5b83c087dd2849ca2b0))
+
+### Features
+
+- Install ModDB WAD archives
+  ([`d32c570`](https://github.com/nledford/DoomDeck/commit/d32c570be6b7cabf58aa1dec5b4799aa47f7c288))
+
+- Validate GitHub API payloads
+  ([`031d6d4`](https://github.com/nledford/DoomDeck/commit/031d6d474e66a03d4542c77040a6deb3a6d7d601))
+
+### Refactoring
+
+- Centralize backup archive creation
+  ([`2c2a63b`](https://github.com/nledford/DoomDeck/commit/2c2a63bb7bcdd472f198436621050f1b82063f2e))
+
+- Centralize Steam shortcut upserts
+  ([`5eaf96d`](https://github.com/nledford/DoomDeck/commit/5eaf96d4c15fe1c946437c6d233d3b6b01ff4af3))
+
+- Isolate validation reporting
+  ([`e673e42`](https://github.com/nledford/DoomDeck/commit/e673e4261a5dec2e22888c203bd1b86c77e141ff))
+
+- Model validation results
+  ([`497923f`](https://github.com/nledford/DoomDeck/commit/497923f3f85d3dcb1c1037bb8e068d9d35b07c60))
+
+- Split ModDB WAD installation
+  ([`ba21aa4`](https://github.com/nledford/DoomDeck/commit/ba21aa46e029cc04b995acf8c721804ff6c3a577))
+
+- Split validation checks
+  ([`263f79b`](https://github.com/nledford/DoomDeck/commit/263f79bfb3cfb63e526aec0b8dca66896e51c29d))
+
+- **cli**: Extract moddb install boundaries
+  ([`2473a57`](https://github.com/nledford/DoomDeck/commit/2473a57ccee168704d2984a42ccda2f39e2349bb))
+
+- **domain**: Extract download and mod boundaries
+  ([`9e3d8fb`](https://github.com/nledford/DoomDeck/commit/9e3d8fb6401a7c2872b5da86e07a3ae813a740c1))
+
+- **github**: Require pydantic schemas
+  ([`e4e8523`](https://github.com/nledford/DoomDeck/commit/e4e85236b1f32ec4393a52a1eb9bb21a7b0b6c74))
+
+- **install**: Model install plan actions
+  ([`f036d58`](https://github.com/nledford/DoomDeck/commit/f036d580b6b431804ce35e5160b1266d34033d3b))
+
+- **moddb**: Name brutal doom selection policy
+  ([`ccaa369`](https://github.com/nledford/DoomDeck/commit/ccaa3699c58a5f1dcadb153e34c7c7464204c15e))
+
+- **mods**: Extract managed mod installation
+  ([`ab5c42d`](https://github.com/nledford/DoomDeck/commit/ab5c42da71b781148bf9580216b84b562b620487))
+
+- **validation**: Extract installation validator
+  ([`37bba8b`](https://github.com/nledford/DoomDeck/commit/37bba8b937be94db09a7332881d885a798154303))
+
+### Testing
+
+- Characterize generated setup validation
+  ([`c51cb97`](https://github.com/nledford/DoomDeck/commit/c51cb97a7bcf80f14b0b1ffe9e699181f9468123))
+
+
 ## v0.2.0 - 2026-05-31
 
 ### Chores
