@@ -43,6 +43,40 @@ def test_github_release_payload_rejects_asset_without_download_url() -> None:
         )
 
 
+def test_github_release_payload_rejects_negative_asset_size() -> None:
+    with pytest.raises(DoomDeckError, match=r"assets\.0\.size"):
+        validate_github_release_payload(
+            {
+                "tag_name": "v1.2.3",
+                "assets": [
+                    {
+                        "name": "uzdoom.zip",
+                        "browser_download_url": "https://github.com/example/releases/download/v1/uzdoom.zip",
+                        "size": -1,
+                    }
+                ],
+            },
+            "example/repo",
+        )
+
+
+def test_github_release_payload_rejects_boolean_asset_size() -> None:
+    with pytest.raises(DoomDeckError, match=r"assets\.0\.size"):
+        validate_github_release_payload(
+            {
+                "tag_name": "v1.2.3",
+                "assets": [
+                    {
+                        "name": "uzdoom.zip",
+                        "browser_download_url": "https://github.com/example/releases/download/v1/uzdoom.zip",
+                        "size": True,
+                    }
+                ],
+            },
+            "example/repo",
+        )
+
+
 def test_github_repository_payload_rejects_wrong_default_branch_type() -> None:
     with pytest.raises(DoomDeckError, match="default_branch"):
         validate_github_repository_payload({"default_branch": 123}, "example/repo")

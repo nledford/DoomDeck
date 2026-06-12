@@ -134,6 +134,41 @@ def test_preset_manifest_round_trips_from_json_shape(tmp_path: Path) -> None:
     assert parsed == manifest
 
 
+def test_preset_from_json_trims_required_text_fields(tmp_path: Path) -> None:
+    parsed = Preset.from_json_object(
+        {
+            "name": "  Vanilla Doom  ",
+            "category": "  Vanilla  ",
+            "engine": "  UZDoom  ",
+            "iwad": str(tmp_path / "iwads" / "DOOM2.WAD"),
+            "files": [],
+            "config": str(tmp_path / "configs" / "uzdoom.ini"),
+            "autoexec": str(tmp_path / "configs" / "autoexec.cfg"),
+            "launcher": str(tmp_path / "launchers" / "Vanilla_Doom.sh"),
+        }
+    )
+
+    assert parsed.name == "Vanilla Doom"
+    assert parsed.category == "Vanilla"
+    assert parsed.engine == "UZDoom"
+
+
+def test_preset_from_json_rejects_non_text_required_fields(tmp_path: Path) -> None:
+    data = {
+        "name": 123,
+        "category": "Vanilla",
+        "engine": "UZDoom",
+        "iwad": str(tmp_path / "iwads" / "DOOM2.WAD"),
+        "files": [],
+        "config": str(tmp_path / "configs" / "uzdoom.ini"),
+        "autoexec": str(tmp_path / "configs" / "autoexec.cfg"),
+        "launcher": str(tmp_path / "launchers" / "Vanilla_Doom.sh"),
+    }
+
+    with pytest.raises(DoomDeckError, match="Preset name"):
+        Preset.from_json_object(data)
+
+
 def test_preset_manifest_rejects_malformed_preset_json(tmp_path: Path) -> None:
     engine = EngineSpec(
         name="UZDoom",

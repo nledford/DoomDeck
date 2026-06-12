@@ -1,171 +1,74 @@
 """Validated GitHub API payload schemas."""
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Mapping
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from doomdeck.domain.models import DoomDeckError
 
 
-@dataclasses.dataclass(frozen=True)
-class GitHubReleaseAssetPayload:
+PYDANTIC_MODEL_CONFIG = ConfigDict(frozen=True, extra="ignore")
+
+
+class GitHubReleaseAssetPayload(BaseModel):
     """Release asset fields DoomDeck consumes from GitHub."""
 
-    name: str
-    browser_download_url: str
-    size: int | None = None
+    model_config = PYDANTIC_MODEL_CONFIG
+
+    name: StrictStr = Field(min_length=1)
+    browser_download_url: StrictStr = Field(min_length=1)
+    size: StrictInt | None = Field(default=None, ge=0)
 
 
-@dataclasses.dataclass(frozen=True)
-class GitHubReleasePayload:
+class GitHubReleasePayload(BaseModel):
     """GitHub release fields DoomDeck needs for download selection."""
 
-    tag_name: str | None = None
-    name: str | None = None
-    assets: list[GitHubReleaseAssetPayload] = dataclasses.field(default_factory=list)
-    zipball_url: str | None = None
+    model_config = PYDANTIC_MODEL_CONFIG
+
+    tag_name: StrictStr | None = None
+    name: StrictStr | None = None
+    assets: list[GitHubReleaseAssetPayload] = Field(default_factory=list)
+    zipball_url: StrictStr | None = Field(default=None, min_length=1)
 
     @property
     def label(self) -> str:
         return self.tag_name or self.name or "latest"
 
 
-@dataclasses.dataclass(frozen=True)
-class GitHubRepositoryPayload:
+class GitHubRepositoryPayload(BaseModel):
     """GitHub repository fields DoomDeck needs for source archive fallback."""
 
-    default_branch: str | None = None
+    model_config = PYDANTIC_MODEL_CONFIG
+
+    default_branch: StrictStr | None = None
 
 
-ValidationErrors = list[tuple[str, str]]
-
-
-def _format_validation_errors(errors: ValidationErrors) -> str:
-    return "; ".join(f"{location}: {message}" if location else message for location, message in errors)
-
-
-def _optional_string(payload: Mapping[Any, Any], field: str, errors: ValidationErrors) -> str | None:
-    if field not in payload or payload[field] is None:
-        return None
-    value = payload[field]
-    if isinstance(value, str):
-        return value
-    errors.append((field, "input should be a string"))
-    return None
-
-
-def _optional_non_empty_string(
-    payload: Mapping[Any, Any],
-    field: str,
-    errors: ValidationErrors,
-) -> str | None:
-    value = _optional_string(payload, field, errors)
-    if value == "":
-        errors.append((field, "string should have at least 1 character"))
-        return None
-    return value
-
-
-def _required_non_empty_string(
-    payload: Mapping[Any, Any],
-    field: str,
-    location: str,
-    errors: ValidationErrors,
-) -> str:
-    if field not in payload:
-        errors.append((location, "field required"))
-        return ""
-    value = payload[field]
-    if not isinstance(value, str):
-        errors.append((location, "input should be a string"))
-        return ""
-    if value == "":
-        errors.append((location, "string should have at least 1 character"))
-        return ""
-    return value
-
-
-def _optional_non_negative_int(
-    payload: Mapping[Any, Any],
-    field: str,
-    location: str,
-    errors: ValidationErrors,
-) -> int | None:
-    if field not in payload or payload[field] is None:
-        return None
-    value = payload[field]
-    if not isinstance(value, int) or isinstance(value, bool):
-        errors.append((location, "input should be an integer"))
-        return None
-    if value < 0:
-        errors.append((location, "input should be greater than or equal to 0"))
-        return None
-    return value
-
-
-def _validate_release_assets(raw_assets: Any, errors: ValidationErrors) -> list[GitHubReleaseAssetPayload]:
-    if raw_assets is None:
-        errors.append(("assets", "input should be a list"))
-        return []
-    if not isinstance(raw_assets, list):
-        errors.append(("assets", "input should be a list"))
-        return []
-
-    assets: list[GitHubReleaseAssetPayload] = []
-    for index, raw_asset in enumerate(raw_assets):
-        location = f"assets.{index}"
-        if not isinstance(raw_asset, Mapping):
-            errors.append((location, "input should be an object"))
-            continue
-        name = _required_non_empty_string(raw_asset, "name", f"{location}.name", errors)
-        browser_download_url = _required_non_empty_string(
-            raw_asset,
-            "browser_download_url",
-            f"{location}.browser_download_url",
-            errors,
-        )
-        size = _optional_non_negative_int(raw_asset, "size", f"{location}.size", errors)
-        if name and browser_download_url:
-            assets.append(
-                GitHubReleaseAssetPayload(
-                    name=name,
-                    browser_download_url=browser_download_url,
-                    size=size,
-                )
-            )
-    return assets
+def _format_pydantic_errors(error: ValidationError) -> str:
+    formatted: list[str] = []
+    for issue in error.errors():
+        location = ".".join(str(part) for part in issue["loc"])
+        message = str(issue["msg"])
+        formatted.append(f"{location}: {message}" if location else message)
+    return "; ".join(formatted)
 
 
 def validate_github_release_payload(payload: Any, repo: str) -> GitHubReleasePayload:
-    errors: ValidationErrors = []
     if not isinstance(payload, Mapping):
-        errors.append(("", "input should be an object"))
-    else:
-        tag_name = _optional_string(payload, "tag_name", errors)
-        name = _optional_string(payload, "name", errors)
-        zipball_url = _optional_non_empty_string(payload, "zipball_url", errors)
-        assets = _validate_release_assets(payload.get("assets", []), errors)
-        if not errors:
-            return GitHubReleasePayload(
-                tag_name=tag_name,
-                name=name,
-                assets=assets,
-                zipball_url=zipball_url,
-            )
-
-    detail = _format_validation_errors(errors)
-    raise DoomDeckError(f"Could not understand GitHub release metadata for {repo}: {detail}")
+        raise DoomDeckError(f"Could not understand GitHub release metadata for {repo}: input should be an object")
+    try:
+        return GitHubReleasePayload.model_validate(payload)
+    except ValidationError as exc:
+        detail = _format_pydantic_errors(exc)
+        raise DoomDeckError(f"Could not understand GitHub release metadata for {repo}: {detail}") from exc
 
 
 def validate_github_repository_payload(payload: Any, repo: str) -> GitHubRepositoryPayload:
-    errors: ValidationErrors = []
     if not isinstance(payload, Mapping):
-        errors.append(("", "input should be an object"))
-    else:
-        default_branch = _optional_string(payload, "default_branch", errors)
-        if not errors:
-            return GitHubRepositoryPayload(default_branch=default_branch)
-
-    detail = _format_validation_errors(errors)
-    raise DoomDeckError(f"Could not understand GitHub repository metadata for {repo}: {detail}")
+        raise DoomDeckError(f"Could not understand GitHub repository metadata for {repo}: input should be an object")
+    try:
+        return GitHubRepositoryPayload.model_validate(payload)
+    except ValidationError as exc:
+        detail = _format_pydantic_errors(exc)
+        raise DoomDeckError(f"Could not understand GitHub repository metadata for {repo}: {detail}") from exc

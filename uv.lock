@@ -374,6 +374,9 @@ wheels = [
 name = "doomdeck"
 version = "0.2.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pydantic" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -390,6 +393,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13.0,<3.0.0" }]
 
 [package.metadata.requires-dev]
 dev = [
