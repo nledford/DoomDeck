@@ -37,19 +37,19 @@ def build_install_plan(
             "steam-app-detection",
             f"Detect Steam DOOM + DOOM II app {appid}: {steam.app_install_dir if steam.app_install_dir else 'not found'}",
         ),
-        InstallAction("doomrunner-appimage", "Install or reuse Doom Runner AppImage"),
-        InstallAction("uzdoom-appimage", "Install or reuse UZDoom AppImage"),
+        InstallAction("doomrunner-windows", "Install or reuse Windows Doom Runner for Proton"),
+        InstallAction("uzdoom-windows", "Install or reuse Windows UZDoom for Proton"),
         InstallAction("steam-wads", "Copy legal IWADs and add-on WADs from the Steam install into the managed Doom tree"),
-        InstallAction("uzdoom-launchers", "Create UZDoom classic/modern config templates and direct launcher scripts"),
+        InstallAction("uzdoom-launchers", "Create UZDoom classic/modern config templates and Steam launch metadata"),
         InstallAction("brutal-doom", "Check/update Brutal Doom from ModDB or install a supplied .pk3/.zip"),
         InstallAction("project-brutality", "Check/update Project Brutality from GitHub and add a Doom Runner preset"),
-        InstallAction("doomrunner-config", "Generate Doom Runner live options.json, setup guide, and stable preset manifest"),
+        InstallAction("doomrunner-config", "Generate Doom Runner options.json copies, setup guide, and stable preset manifest"),
     ]
     if not skip_steam_shortcut:
         actions.append(
             InstallAction(
                 "steam-shortcut",
-                f"Add/update Steam non-Steam shortcut for Doom Runner at {_shortcuts_label(steam.shortcuts_vdf)}",
+                f"Add/update Steam non-Steam shortcuts for Windows Doom Runner and UZDoom presets at {_shortcuts_label(steam.shortcuts_vdf)}",
             )
         )
     return InstallPlan(tuple(actions))

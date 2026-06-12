@@ -1,10 +1,11 @@
-"""Build Doom Runner live options from DoomDeck state."""
+"""Build Doom Runner options from DoomDeck state."""
 from __future__ import annotations
 
 import re
 from pathlib import Path
 from typing import Any
 
+from doomdeck.application.proton import proton_windows_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs
 from doomdeck.domain.wads import DOOMRUNNER_IWAD_DISPLAY_NAMES, iwad_dest_name
@@ -37,14 +38,14 @@ def build_doomrunner_iwad_entries(dirs: Dirs) -> list[dict[str, str]]:
     for iwad_name, display_name in DOOMRUNNER_IWAD_DISPLAY_NAMES.items():
         iwad_path = dirs.iwads / iwad_dest_name(iwad_name)
         if iwad_path.exists():
-            entries.append({"name": display_name, "path": str(iwad_path)})
+            entries.append({"name": display_name, "path": proton_windows_path(iwad_path)})
     return entries
 
 
 def choose_doomrunner_default_iwad(iwad_entries: list[dict[str, str]], dirs: Dirs) -> str:
     preferred = dirs.iwads / "DOOM2.WAD"
     for entry in iwad_entries:
-        if entry["path"] == str(preferred):
+        if entry["path"] == proton_windows_path(preferred):
             return entry["path"]
     return iwad_entries[0]["path"] if iwad_entries else ""
 
@@ -56,24 +57,24 @@ def build_doomrunner_preset(dirs: Dirs, preset: dict[str, Any]) -> dict[str, Any
     autoexec = Path(preset["autoexec"])
     save_dir = dirs.saves / slug
     screenshot_dir = dirs.screenshots / slug
-    mods = [{"path": str(path), "checked": True} for path in preset.get("files", [])]
+    mods = [{"path": proton_windows_path(path), "checked": True} for path in preset.get("files", [])]
     additional_args = (
-        f"-noautoload -config {doomrunner_quote_arg(config)} "
-        f"-savedir {doomrunner_quote_arg(save_dir)} +exec {doomrunner_quote_arg(autoexec)}"
+        f"-noautoload -config {doomrunner_quote_arg(proton_windows_path(config))} "
+        f"-savedir {doomrunner_quote_arg(proton_windows_path(save_dir))} +exec {doomrunner_quote_arg(proton_windows_path(autoexec))}"
     )
     return {
         "name": name,
         "selected_engine": DOOMRUNNER_ENGINE_ID,
         "selected_config": "",
-        "selected_IWAD": str(preset["iwad"]),
+        "selected_IWAD": proton_windows_path(preset["iwad"]),
         "selected_mappacks": [],
         "mods": mods,
         "load_maps_after_mods": False,
         "alternative_paths": {
-            "config_dir": str(config.parent),
-            "save_dir": str(save_dir),
+            "config_dir": proton_windows_path(config.parent),
+            "save_dir": proton_windows_path(save_dir),
             "demo_dir": "",
-            "screenshot_dir": str(screenshot_dir),
+            "screenshot_dir": proton_windows_path(screenshot_dir),
         },
         "additional_args": additional_args,
         "env_vars": {},
@@ -110,28 +111,28 @@ def build_doomrunner_options(dirs: Dirs, manifest: dict[str, Any]) -> dict[str, 
                 {
                     "id": DOOMRUNNER_ENGINE_ID,
                     "name": DOOMRUNNER_ENGINE_NAME,
-                    "path": str(dirs.uzdoom / "uzdoom.sh"),
-                    "config_dir": str(dirs.uzdoom_config),
-                    "data_dir": str(dirs.root),
+                    "path": proton_windows_path(dirs.uzdoom / "uzdoom.exe"),
+                    "config_dir": proton_windows_path(dirs.uzdoom_config),
+                    "data_dir": proton_windows_path(dirs.root),
                     "family": "ZDoom",
                 }
             ],
         },
         "IWADs": {
             "auto_update": False,
-            "directory": str(dirs.iwads),
+            "directory": proton_windows_path(dirs.iwads),
             "search_subdirs": False,
             "default_iwad": choose_doomrunner_default_iwad(iwad_entries, dirs),
             "IWAD_list": iwad_entries,
         },
         "maps": {
-            "directory": str(dirs.pwads),
+            "directory": proton_windows_path(dirs.pwads),
             "sort_column": 0,
             "sort_order": 0,
             "show_icons": False,
         },
         "mods": {
-            "last_used_dir": str(dirs.mods),
+            "last_used_dir": proton_windows_path(dirs.mods),
             "show_icons": True,
         },
         "launch_options": {

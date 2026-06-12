@@ -54,6 +54,30 @@ def zip_contains_markers(path: Path, markers: set[str]) -> bool:
     return markers.issubset(normalized)
 
 
+def safe_extract_zip(path: Path, dest: Path) -> None:
+    dest = dest.resolve()
+    try:
+        with zipfile.ZipFile(path) as archive:
+            infos = [info for info in archive.infolist() if not info.is_dir()]
+            prefix = common_zip_toplevel(info.filename for info in infos)
+            validated: list[tuple[zipfile.ZipInfo, Path]] = []
+            for info in infos:
+                normalized = normalized_zip_member_name(info.filename, prefix)
+                if not normalized:
+                    raise DoomDeckError(f"Unsafe path in zip archive: {info.filename}")
+                member_path = dest.joinpath(*normalized.split("/")).resolve()
+                if not path_is_or_is_under(member_path, dest):
+                    raise DoomDeckError(f"Unsafe path in zip archive: {info.filename}")
+                validated.append((info, member_path))
+
+            for info, member_path in validated:
+                member_path.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as source, member_path.open("wb") as dest_handle:
+                    shutil.copyfileobj(source, dest_handle)
+    except zipfile.BadZipFile as exc:
+        raise DoomDeckError(f"Invalid zip archive: {path}") from exc
+
+
 def choose_payload_member(infos: list[zipfile.ZipInfo]) -> Optional[zipfile.ZipInfo]:
     payloads = [info for info in infos if Path(info.filename).suffix.lower() in {".pk3", ".wad"}]
     if not payloads:

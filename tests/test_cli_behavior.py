@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from doomdeck.cli import build_arg_parser, main, select_release_asset
+from doomdeck.cli import build_arg_parser, main, select_release_asset, select_windows_release_asset
 from doomdeck.domain.models import DoomDeckError
 
 
@@ -18,7 +18,13 @@ class CLIBehaviorTests(unittest.TestCase):
         self.assertEqual(args.command, "install")
         self.assertEqual(args.brutal_doom_channel, "stable")
         self.assertFalse(args.skip_downloads)
+        self.assertEqual(args.proton_compat_tool, "proton_10")
         self.assertTrue(callable(args.func))
+
+    def test_install_parser_accepts_proton_compat_tool_override(self) -> None:
+        args = build_arg_parser().parse_args(["install", "--proton-compat-tool", "proton_experimental"])
+
+        self.assertEqual(args.proton_compat_tool, "proton_experimental")
 
     def test_install_parser_rejects_moddb_wad_url_option(self) -> None:
         with self.assertRaises(SystemExit):
@@ -128,6 +134,55 @@ class CLIBehaviorTests(unittest.TestCase):
         with patch("doomdeck.cli.github_request_json", return_value=release):
             with self.assertRaisesRegex(DoomDeckError, "assets"):
                 select_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"))
+
+    def test_windows_release_asset_selection_prefers_x86_64_zip_over_appimage_and_legacy(self) -> None:
+        release = {
+            "tag_name": "v1.2.3",
+            "assets": [
+                {
+                    "name": "DoomRunner-1.9.2-Windows-legacy_i386-static_exe.zip",
+                    "browser_download_url": "https://example.test/doomrunner-i386.zip",
+                    "size": 1234,
+                },
+                {
+                    "name": "DoomRunner-1.9.2-Linux-x86_64.AppImage",
+                    "browser_download_url": "https://example.test/doomrunner.AppImage",
+                    "size": 1234,
+                },
+                {
+                    "name": "DoomRunner-1.9.2-Windows-recent_x86_64-static_exe.zip",
+                    "browser_download_url": "https://example.test/doomrunner-x86_64.zip",
+                    "size": 1234,
+                },
+            ],
+        }
+
+        with patch("doomdeck.cli.github_request_json", return_value=release):
+            asset = select_windows_release_asset("Youda008/DoomRunner", logging.getLogger("test"))
+
+        self.assertEqual(asset.name, "DoomRunner-1.9.2-Windows-recent_x86_64-static_exe.zip")
+
+    def test_windows_release_asset_selection_finds_uzdoom_windows_zip(self) -> None:
+        release = {
+            "tag_name": "4.14.3",
+            "assets": [
+                {
+                    "name": "Linux-UZDoom-4.14.3.AppImage",
+                    "browser_download_url": "https://example.test/uzdoom.AppImage",
+                    "size": 1234,
+                },
+                {
+                    "name": "Windows-UZDoom-4.14.3.zip",
+                    "browser_download_url": "https://example.test/uzdoom.zip",
+                    "size": 1234,
+                },
+            ],
+        }
+
+        with patch("doomdeck.cli.github_request_json", return_value=release):
+            asset = select_windows_release_asset("UZDoom/UZDoom", logging.getLogger("test"))
+
+        self.assertEqual(asset.name, "Windows-UZDoom-4.14.3.zip")
 
 
 if __name__ == "__main__":

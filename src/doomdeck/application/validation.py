@@ -3,17 +3,18 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, cast
 
 from doomdeck.application.doomrunner import DOOMRUNNER_ENGINE_ID, doomrunner_options_paths
+from doomdeck.application.proton import proton_linux_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
 from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
 from doomdeck.infrastructure.archives import zip_contains_markers
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT
+from doomdeck.infrastructure.steam_compat import compat_mapping_key, load_text_vdf
 from doomdeck.infrastructure.steam_shortcuts import get_bkv_str, load_shortcuts, shortcut_entries
 
 SteamOSDetector = Callable[[], tuple[bool, str]]
@@ -79,18 +80,14 @@ class InstallationValidator:
             add_validation_item(items, "PASS" if path.exists() else "FAIL", f"Required path exists: {path}")
 
     def _validate_tool_executables(self, items: list[ValidationItem], dirs: Dirs) -> None:
-        doomrunner_app = dirs.doomrunner / "DoomRunner.AppImage"
-        doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
-        uzdoom_app = dirs.uzdoom / "uzdoom.AppImage"
-        uzdoom_wrapper = dirs.uzdoom / "uzdoom.sh"
+        doomrunner_app = dirs.doomrunner / "DoomRunner.exe"
+        uzdoom_app = dirs.uzdoom / "uzdoom.exe"
         for label, path in [
-            ("Doom Runner AppImage", doomrunner_app),
-            ("Doom Runner wrapper", doomrunner_wrapper),
-            ("UZDoom AppImage", uzdoom_app),
-            ("UZDoom wrapper", uzdoom_wrapper),
+            ("Windows Doom Runner executable", doomrunner_app),
+            ("Windows UZDoom executable", uzdoom_app),
         ]:
-            executable = path.exists() and os.access(path, os.X_OK)
-            add_validation_item(items, "PASS" if executable else "FAIL", f"{label} exists and is executable: {path}")
+            exists = path.exists()
+            add_validation_item(items, "PASS" if exists else "FAIL", f"{label} exists: {path}")
 
     def _validate_wads(self, items: list[ValidationItem], dirs: Dirs) -> None:
         copied_iwads = sorted(
@@ -223,34 +220,34 @@ class InstallationValidator:
     def _validate_doomrunner_live_options(self, items: list[ValidationItem], dirs: Dirs) -> None:
         live_options_path = doomrunner_options_paths(dirs)[0]
         if live_options_path.exists():
-            live_options = self._read_json_object_for_validation(items, live_options_path, "Doom Runner live options JSON")
+            live_options = self._read_json_object_for_validation(items, live_options_path, "Doom Runner generated options JSON")
             if live_options is None:
                 return
             engine_list = live_options.get("engines", {}).get("engine_list", [])
             engine_ok = any(
                 engine.get("id") == DOOMRUNNER_ENGINE_ID
                 and bool(engine.get("path"))
-                and Path(engine.get("path", "")).exists()
+                and proton_linux_path(engine.get("path", "")).exists()
                 for engine in engine_list
             )
-            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner live config has usable UZDoom engine: {live_options_path}")
+            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner generated config has usable UZDoom engine: {live_options_path}")
             iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
-            iwad_ok = any(bool(iwad.get("path")) and Path(iwad.get("path", "")).exists() for iwad in iwad_list)
-            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner live config has IWAD entries: {live_options_path}")
+            iwad_ok = any(bool(iwad.get("path")) and proton_linux_path(iwad.get("path", "")).exists() for iwad in iwad_list)
+            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner generated config has IWAD entries: {live_options_path}")
             live_presets = live_options.get("presets", [])
             preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
-            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner live config has launchable presets: {live_options_path}")
+            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner generated config has launchable presets: {live_options_path}")
             video_options = live_options.get("video_options", {})
             resolution_ok = (
                 video_options.get("resolution_x") == STEAM_DECK_WIDTH
                 and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
             )
-            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner live config uses Steam Deck resolution: {live_options_path}")
+            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner generated config uses Steam Deck resolution: {live_options_path}")
         else:
-            add_validation_item(items, "FAIL", f"Doom Runner live options missing: {live_options_path}")
+            add_validation_item(items, "FAIL", f"Doom Runner generated options missing: {live_options_path}")
 
     def _validate_shell_scripts(self, items: list[ValidationItem], dirs: Dirs) -> None:
-        shell_scripts = [dirs.uzdoom / "uzdoom.sh", *sorted(dirs.launchers.glob("*.sh"))]
+        shell_scripts = sorted(dirs.launchers.glob("*.sh"))
         seen_scripts: set[Path] = set()
         for script in shell_scripts:
             if script in seen_scripts:
@@ -267,7 +264,8 @@ class InstallationValidator:
                 add_validation_item(items, "PASS" if syntax_ok else "FAIL", f"Shell syntax valid for {script}")
 
     def _validate_steam(self, items: list[ValidationItem], dirs: Dirs, steam: SteamInfo) -> None:
-        doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
+        doomrunner_exe = dirs.doomrunner / "DoomRunner.exe"
+        uzdoom_exe = dirs.uzdoom / "uzdoom.exe"
         if steam.steam_root:
             add_validation_item(items, "PASS", f"Steam root detected: {steam.steam_root}")
         else:
@@ -286,17 +284,65 @@ class InstallationValidator:
                     if value.type_code == BKV_OBJECT and get_bkv_str(value.value, "appname", "AppName") == "Doom Runner":
                         found = True
                         exe = get_bkv_str(value.value, "exe", "Exe")
-                        if str(doomrunner_wrapper) in exe:
-                            add_validation_item(items, "PASS", "Steam shortcut exists for Doom Runner with expected wrapper path")
+                        if str(doomrunner_exe) in exe:
+                            add_validation_item(items, "PASS", "Steam shortcut exists for Windows Doom Runner with expected executable path")
                         else:
                             add_validation_item(items, "WARN", f"Steam shortcut named Doom Runner exists but exe differs: {exe}")
                         break
                 if not found:
                     add_validation_item(items, "WARN", f"No Doom Runner shortcut found in {steam.shortcuts_vdf}")
+                preset_shortcut = False
+                doomdeck_appids: list[int] = []
+                for value in shortcuts_obj.values():
+                    if value.type_code != BKV_OBJECT:
+                        continue
+                    exe = get_bkv_str(value.value, "exe", "Exe")
+                    appname = get_bkv_str(value.value, "appname", "AppName")
+                    launch_options = get_bkv_str(value.value, "LaunchOptions")
+                    appid_value = value.value.get("appid")
+                    if appid_value is not None:
+                        doomrunner_match = appname == "Doom Runner" and str(doomrunner_exe) in exe
+                        preset_match = appname.startswith("DoomDeck - ") and str(uzdoom_exe) in exe
+                        if doomrunner_match or preset_match:
+                            doomdeck_appids.append(int(appid_value.value))
+                    if str(uzdoom_exe) in exe and appname.startswith("DoomDeck - ") and "-iwad" in launch_options:
+                        preset_shortcut = True
+                        break
+                add_validation_item(
+                    items,
+                    "PASS" if preset_shortcut else "WARN",
+                    "Steam shortcut exists for at least one Windows UZDoom preset with launch options",
+                )
+                self._validate_steam_compat_mapping(items, steam, doomdeck_appids)
             except DoomDeckError as exc:
                 add_validation_item(items, "FAIL", f"Could not parse shortcuts.vdf: {exc}")
         else:
             add_validation_item(items, "WARN", "Steam shortcuts.vdf does not exist yet or Steam user was not detected")
+
+    def _validate_steam_compat_mapping(self, items: list[ValidationItem], steam: SteamInfo, appids: list[int]) -> None:
+        if not appids:
+            return
+        localconfig = steam.localconfig_vdf or (steam.shortcuts_vdf.parent / "localconfig.vdf" if steam.shortcuts_vdf else None)
+        if not localconfig or not localconfig.exists():
+            add_validation_item(items, "WARN", "Steam localconfig.vdf does not exist yet; Proton compatibility mapping cannot be confirmed")
+            return
+        root = load_text_vdf(localconfig)
+        mapping: object = root
+        for key in ["UserLocalConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"]:
+            if not isinstance(mapping, dict):
+                mapping = {}
+                break
+            mapping = cast(dict[str, object], mapping).get(key, {})
+        if not isinstance(mapping, dict):
+            add_validation_item(items, "WARN", f"Steam Proton compatibility mapping is missing or malformed: {localconfig}")
+            return
+        mapping_dict = cast(dict[str, object], mapping)
+        mapped = [appid for appid in appids if isinstance(mapping_dict.get(compat_mapping_key(appid)), dict)]
+        add_validation_item(
+            items,
+            "PASS" if mapped else "WARN",
+            f"Steam Proton compatibility mapping exists for DoomDeck shortcuts: {localconfig}",
+        )
 
     def _validate_backups(self, items: list[ValidationItem], dirs: Dirs) -> None:
         if not any(dirs.backups.glob("*")):

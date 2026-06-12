@@ -12,6 +12,7 @@ from doomdeck.infrastructure.archives import (
     common_zip_toplevel,
     normalized_zip_member_name,
     safe_extract_tar,
+    safe_extract_zip,
     write_tree_tar_gz,
     zip_contains_markers,
 )
@@ -42,6 +43,28 @@ def test_zip_contains_markers_matches_case_insensitively_under_common_folder(tmp
         archive.writestr("Project_Brutality-master/ZScript.zc", "")
 
     assert zip_contains_markers(archive_path, {"gameinfo.txt", "zscript.zc"})
+
+
+def test_safe_zip_extraction_strips_shared_archive_folder(tmp_path) -> None:
+    archive_path = tmp_path / "uzdoom.zip"
+    dest = tmp_path / "extract"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("Windows-UZDoom-4.14.3/uzdoom.exe", "exe")
+        archive.writestr("Windows-UZDoom-4.14.3/fmod.dll", "dll")
+
+    safe_extract_zip(archive_path, dest)
+
+    assert (dest / "uzdoom.exe").read_text(encoding="utf-8") == "exe"
+    assert (dest / "fmod.dll").read_text(encoding="utf-8") == "dll"
+
+
+def test_safe_zip_extraction_rejects_members_outside_destination(tmp_path) -> None:
+    archive_path = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("../outside.exe", "owned")
+
+    with pytest.raises(DoomDeckError, match="Unsafe path in zip archive"):
+        safe_extract_zip(archive_path, tmp_path / "extract")
 
 
 def test_payload_selection_prefers_primary_brutal_doom_pk3() -> None:

@@ -4,12 +4,12 @@ DoomDeck CLI
 
 Steam Deck Doom modding setup automation for:
 - Steam DOOM + DOOM II app 2280 IWAD discovery/copy
-- Doom Runner AppImage installation
-- UZDoom AppImage installation
+- Windows Doom Runner installation for Proton
+- Windows UZDoom installation for Proton
 - Brutal Doom manual-drop validation
-- Steam non-Steam shortcut integration for Doom Runner
-- Direct UZDoom launcher scripts for vanilla-style, UZDoom, Brutal Doom, and Project Brutality presets
-- Doom Runner live options.json generation for current Linux/AppImage builds
+- Steam non-Steam shortcut integration for Doom Runner and direct UZDoom presets
+- UZDoom launch metadata for vanilla-style, UZDoom, Brutal Doom, and Project Brutality presets
+- Doom Runner options.json generation with Proton-visible Windows paths
 
 Design goals:
 - User-space only by default
@@ -43,6 +43,7 @@ from doomdeck.application.content_groups import build_content_group_document
 from doomdeck.application.doomrunner import (
     build_doomrunner_options,
     doomrunner_options_paths,
+    launcher_slug,
 )
 from doomdeck.application.install import build_install_plan
 from doomdeck.application.managed_mods import (
@@ -53,6 +54,7 @@ from doomdeck.application.managed_mods import (
 from doomdeck.application.moddb_wads import install_moddb_wad_urls
 from doomdeck.application.presets import build_preset_manifest
 from doomdeck.application.presets import choose_default_preset_iwad as _choose_default_preset_iwad
+from doomdeck.application.proton import build_uzdoom_launch_options, proton_windows_path
 from doomdeck.application.validation import InstallationValidator, format_validation_report, validation_has_failures
 from doomdeck.application.wads import find_wads_in_install
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
@@ -62,6 +64,7 @@ from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, ModSour
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
 from doomdeck.infrastructure.archives import (
     safe_extract_tar,
+    safe_extract_zip,
     write_tree_tar_gz,
 )
 from doomdeck.infrastructure.binary_vdf import BinaryVDF
@@ -71,7 +74,6 @@ from doomdeck.infrastructure.files import (
     atomic_write_text,
     backup_path,
     files_equal,
-    replace_file_safely,
 )
 from doomdeck.infrastructure.github_api import (
     validate_github_release_payload,
@@ -86,6 +88,7 @@ from doomdeck.infrastructure.steam_shortcuts import (
     load_shortcuts,
     upsert_shortcut,
 )
+from doomdeck.infrastructure.steam_compat import compat_mapping_key, dumps_text_vdf, load_text_vdf, set_compat_tool_mapping
 
 APPID_DOOM_PLUS_DOOM_II = "2280"
 DEFAULT_ROOT = Path.home() / "Games" / "Doom"
@@ -305,7 +308,8 @@ def discover_steam(args: argparse.Namespace, logger: logging.Logger) -> SteamInf
     libraries = parse_library_folders(steam_root, logger)
     app_install_dir = find_steam_app_install_dir(libraries, APPID_DOOM_PLUS_DOOM_II, logger)
     user_id, shortcuts = find_steam_user_id(steam_root, args.steam_user_id, logger)
-    return SteamInfo(steam_root, user_id, shortcuts, libraries, app_install_dir)
+    localconfig = shortcuts.parent / "localconfig.vdf" if shortcuts else None
+    return SteamInfo(steam_root, user_id, shortcuts, libraries, app_install_dir, localconfig)
 
 
 def copy_wads(
@@ -393,6 +397,53 @@ def select_release_asset(repo: str, prefer_legacy_appimage: bool, logger: loggin
     )
 
 
+def select_windows_release_asset(repo: str, logger: logging.Logger) -> GitHubAsset:
+    release = validate_github_release_payload(
+        github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
+        repo,
+    )
+    tag_name = release.label
+    assets = release.assets
+    if not assets:
+        raise DoomDeckError(f"GitHub release {repo}@{tag_name} has no downloadable assets")
+
+    repo_key = repo.split("/")[-1].lower().replace("_", "").replace("-", "")
+
+    def score(asset: Any) -> int:
+        name = asset.name
+        lower = name.lower()
+        compact = lower.replace("_", "").replace("-", "")
+        value = 0
+        if lower.endswith(".zip"):
+            value += 100
+        if "windows" in lower or "win64" in lower:
+            value += 80
+        if any(token in lower for token in ["x86_64", "x64", "amd64"]):
+            value += 40
+        if "recent" in lower:
+            value += 15
+        if repo_key in compact:
+            value += 10
+        if any(token in lower for token in ["legacy", "i386", "i686", "x86-32"]):
+            value -= 80
+        if any(token in lower for token in ["linux", "appimage", "mac", "dmg", "arm64", "aarch64"]):
+            value -= 120
+        return value
+
+    ranked = sorted(assets, key=score, reverse=True)
+    chosen = ranked[0]
+    if score(chosen) < 120:
+        names = ", ".join(a.name for a in assets)
+        raise DoomDeckError(f"Could not identify a suitable Windows ZIP for {repo}@{tag_name}. Assets: {names}")
+    logger.info("Selected Windows GitHub asset for %s: %s", repo, chosen.name)
+    return GitHubAsset(
+        name=chosen.name,
+        url=chosen.browser_download_url,
+        size=chosen.size,
+        tag_name=str(tag_name),
+    )
+
+
 def download_url(
     url: str,
     dest: Path,
@@ -420,45 +471,76 @@ def download_url(
     )
 
 
-def install_appimage_from_github(
+def install_windows_app_from_github(
     repo: str,
-    target: Path,
+    target_dir: Path,
+    expected_exe: str,
     dirs: Dirs,
     args: argparse.Namespace,
     logger: logging.Logger,
     explicit_url: Optional[str] = None,
 ) -> Optional[Path]:
+    exe_path = target_dir / expected_exe
     if args.skip_downloads and not explicit_url:
-        if target.exists():
-            logger.info("Skipping download; using existing %s", target)
-            return target
-        logger.warning("Skipping download and target does not exist: %s", target)
+        if exe_path.exists():
+            logger.info("Skipping download; using existing Windows app %s", exe_path)
+            return exe_path
+        logger.warning("Skipping download and target does not exist: %s", exe_path)
         return None
     if explicit_url:
-        asset_name = safe_download_name(explicit_url, f"{repo.split('/')[-1]}.AppImage")
+        asset_name = safe_download_name(explicit_url, f"{repo.split('/')[-1]}.zip")
         url = explicit_url
         expected_size = None
         allowed_hosts = None
     else:
-        asset = select_release_asset(repo, args.prefer_legacy_appimage, logger)
-        asset_name = asset.name
+        asset = select_windows_release_asset(repo, logger)
+        asset_name = safe_download_name(asset.name, f"{repo.split('/')[-1]}.zip")
         url = asset.url
         expected_size = asset.size
         allowed_hosts = {"github.com"}
-    download_dest = dirs.downloads / asset_name
     downloaded = download_url(
         url,
-        download_dest,
+        dirs.downloads / asset_name,
         args.dry_run,
         logger,
         force=args.force_download,
         allowed_hosts=allowed_hosts,
         expected_size=expected_size,
     )
-    if not args.dry_run and not downloaded.exists():
-        raise DoomDeckError(f"Expected downloaded asset at {downloaded}")
-    replace_file_safely(downloaded, target, dirs.backups, args.dry_run, logger)
-    return target
+    if args.dry_run:
+        return exe_path
+    install_windows_app_archive(downloaded, target_dir, expected_exe, dirs.backups, logger)
+    return exe_path
+
+
+def install_windows_app_archive(
+    archive_path: Path,
+    target_dir: Path,
+    expected_exe: str,
+    backups_dir: Path,
+    logger: logging.Logger,
+) -> None:
+    temp_dir = target_dir.parent / f".{target_dir.name}.extract-{now_stamp()}"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    logger.info("Extract Windows app archive: %s -> %s", archive_path, temp_dir)
+    try:
+        safe_extract_zip(archive_path, temp_dir)
+        exe_path = temp_dir / expected_exe
+        if not exe_path.exists():
+            raise DoomDeckError(f"Windows archive did not contain expected executable {expected_exe}: {archive_path}")
+        if target_dir.exists() or target_dir.is_symlink():
+            backup_path(target_dir, backups_dir, dry_run=False, logger=logger, label=target_dir.name)
+            if target_dir.is_dir() and not target_dir.is_symlink():
+                shutil.rmtree(target_dir)
+            else:
+                target_dir.unlink()
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(temp_dir), str(target_dir))
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        raise
 
 
 def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
@@ -582,52 +664,6 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         ModSource.github(url=url, tag=tag_name),
         force=args.force_download,
     )
-
-
-def write_wrappers(dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
-    doomrunner_appimage = dirs.doomrunner / "DoomRunner.AppImage"
-    doomrunner_wrapper = dirs.launchers / "doom-runner.sh"
-    uzdoom_appimage = dirs.uzdoom / "uzdoom.AppImage"
-    uzdoom_wrapper = dirs.uzdoom / "uzdoom.sh"
-
-    common_shell = """# This wrapper is generated by doomdeck.
-# It keeps config/data inside the managed Doom tree when possible.
-"""
-
-    doomrunner_content = f"""#!/usr/bin/env bash
-{common_shell}set -euo pipefail
-ROOT={shell_quote(str(dirs.root))}
-APPIMAGE={shell_quote(str(doomrunner_appimage))}
-export XDG_CONFIG_HOME="$ROOT/configs/xdg-config"
-export XDG_DATA_HOME="$ROOT/configs/xdg-data"
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-if [[ ! -x "$APPIMAGE" ]]; then
-  echo "Doom Runner AppImage is missing or not executable: $APPIMAGE" >&2
-  exit 1
-fi
-if [[ ! -e /dev/fuse ]]; then
-  export APPIMAGE_EXTRACT_AND_RUN=1
-fi
-exec "$APPIMAGE" "$@"
-"""
-    uzdoom_content = f"""#!/usr/bin/env bash
-{common_shell}set -euo pipefail
-ROOT={shell_quote(str(dirs.root))}
-APPIMAGE={shell_quote(str(uzdoom_appimage))}
-export XDG_CONFIG_HOME="$ROOT/configs/xdg-config"
-export XDG_DATA_HOME="$ROOT/configs/xdg-data"
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
-if [[ ! -x "$APPIMAGE" ]]; then
-  echo "UZDoom AppImage is missing or not executable: $APPIMAGE" >&2
-  exit 1
-fi
-if [[ ! -e /dev/fuse ]]; then
-  export APPIMAGE_EXTRACT_AND_RUN=1
-fi
-exec "$APPIMAGE" "$@"
-"""
-    atomic_write_text(doomrunner_wrapper, doomrunner_content, dry_run, logger, mode=0o755)
-    atomic_write_text(uzdoom_wrapper, uzdoom_content, dry_run, logger, mode=0o755)
 
 
 def shell_quote(value: str) -> str:
@@ -916,9 +952,12 @@ def is_generated_preset_launcher(path: Path) -> bool:
     except OSError:
         return False
     return (
-        "UZDOOM=" in text
-        and "IWAD=" in text
-        and 'exec "$UZDOOM" -noautoload -iwad "$IWAD"' in text
+        (
+            "UZDOOM=" in text
+            and "IWAD=" in text
+            and 'exec "$UZDOOM" -noautoload -iwad "$IWAD"' in text
+        )
+        or "DOOMDECK_WINDOWS_PROTON_PRESET=" in text
     )
 
 
@@ -946,41 +985,32 @@ def write_launchers_and_manifest(
     logger: logging.Logger,
 ) -> dict[str, Any]:
     manifest = generate_preset_manifest(dirs, brutal_path, project_brutality_path)
-    uzdoom = dirs.uzdoom / "uzdoom.sh"
     written_launchers: set[Path] = set()
     for preset in manifest["presets"]:
         launcher = Path(preset["launcher"])
         written_launchers.add(launcher)
-        iwad = Path(preset["iwad"])
-        config = Path(preset["config"])
-        autoexec = Path(preset["autoexec"])
         files = [Path(p) for p in preset.get("files", [])]
-        file_args = ""
+        shortcut_name = f"DoomDeck - {preset['name']}"
+        preset["steam_shortcut_name"] = shortcut_name
+        preset["launch_options"] = build_uzdoom_launch_options(preset)
         missing_guard = ""
         if files:
             missing_hint = str(preset.get("missing_hint", "Install the required mod file, then rerun this launcher."))
-            for idx, file_path in enumerate(files):
+            for file_path in files:
                 missing_guard += f"if [[ ! -f {shell_quote(str(file_path))} ]]; then\n"
                 missing_guard += f"  echo 'Missing required mod file: {file_path}' >&2\n"
                 missing_guard += f"  echo {shell_quote(missing_hint)} >&2\n"
                 missing_guard += "  exit 2\nfi\n"
-            quoted = " ".join(shell_quote(str(p)) for p in files)
-            file_args = f" -file {quoted}"
         content = f"""#!/usr/bin/env bash
 set -euo pipefail
-UZDOOM={shell_quote(str(uzdoom))}
-IWAD={shell_quote(str(iwad))}
-CONFIG={shell_quote(str(config))}
-AUTOEXEC={shell_quote(str(autoexec))}
-if [[ ! -x "$UZDOOM" ]]; then
-  echo "UZDoom wrapper is missing or not executable: $UZDOOM" >&2
+DOOMDECK_WINDOWS_PROTON_PRESET={shell_quote(str(preset["name"]))}
+STEAM_SHORTCUT={shell_quote(shortcut_name)}
+if [[ ! -f {shell_quote(str(Path(preset["iwad"])))} ]]; then
+  echo "Missing IWAD: {preset["iwad"]}" >&2
   exit 1
 fi
-if [[ ! -f "$IWAD" ]]; then
-  echo "Missing IWAD: $IWAD" >&2
-  exit 1
-fi
-{missing_guard}exec "$UZDOOM" -noautoload -iwad "$IWAD" -config "$CONFIG" +exec "$AUTOEXEC"{file_args} "$@"
+{missing_guard}echo "Launch $DOOMDECK_WINDOWS_PROTON_PRESET from the Steam shortcut '$STEAM_SHORTCUT' so Windows UZDoom runs through Proton with Steam Input." >&2
+exit 2
 """
         atomic_write_text(launcher, content, dry_run, logger, mode=0o755)
 
@@ -1042,31 +1072,51 @@ def refresh_existing_doomrunner_content_groups(
 
 def write_doomrunner_live_config(dirs: Dirs, manifest: dict[str, Any], args: argparse.Namespace, logger: logging.Logger) -> None:
     if getattr(args, "skip_doomrunner_live_config", False):
-        logger.info("Skipping Doom Runner live options.json generation")
+        logger.info("Skipping Doom Runner generated options.json copies")
         return
-    if is_process_running(["DoomRunner.AppImage", "DoomRunner ", "doom-runner.sh"]):
+    if is_process_running(["DoomRunner.exe", "DoomRunner "]):
         raise DoomDeckError("Doom Runner appears to be running. Close it before rewriting options.json.")
 
     options = build_doomrunner_options(dirs, manifest)
     content = json.dumps(options, indent=4) + "\n"
-    for preset in options["presets"]:
-        for key in ["save_dir", "screenshot_dir"]:
-            path_text = preset.get("alternative_paths", {}).get(key, "")
-            if path_text:
-                ensure_dir(Path(path_text), args.dry_run, logger)
+    for preset in manifest.get("presets", []):
+        slug = launcher_slug(str(preset.get("name", ""))).lower()
+        if slug:
+            ensure_dir(dirs.saves / slug, args.dry_run, logger)
+            ensure_dir(dirs.screenshots / slug, args.dry_run, logger)
 
-    for options_path in doomrunner_options_paths(dirs):
+    extra_options_paths = tuple(getattr(args, "extra_doomrunner_options_paths", ()))
+    for options_path in [*doomrunner_options_paths(dirs), *extra_options_paths]:
         if options_path.exists():
             try:
                 current = options_path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 current = ""
             if current == content:
-                logger.info("Doom Runner live config already current: %s", options_path)
+                logger.info("Doom Runner generated options already current: %s", options_path)
                 continue
             label = f"doomrunner-options-{options_path.parent.parent.name}.json"
             backup_path(options_path, dirs.backups, args.dry_run, logger, label=label)
         atomic_write_text(options_path, content, args.dry_run, logger)
+
+
+def doomrunner_proton_options_path(steam: SteamInfo, appid: int) -> Optional[Path]:
+    if not steam.steam_root:
+        return None
+    return (
+        steam.steam_root
+        / "steamapps"
+        / "compatdata"
+        / compat_mapping_key(appid)
+        / "pfx"
+        / "drive_c"
+        / "users"
+        / "steamuser"
+        / "AppData"
+        / "Roaming"
+        / "DoomRunner"
+        / "options.json"
+    )
 
 
 def render_content_group_guide(manifest: dict[str, Any]) -> str:
@@ -1117,15 +1167,15 @@ Generated by `doomdeck`.
 
 ```text
 {dirs.root}/
-├── tools/doomrunner/              Doom Runner AppImage
-├── source-ports/uzdoom/           UZDoom AppImage and wrapper
+├── tools/doomrunner/              Windows Doom Runner executable for Proton
+├── source-ports/uzdoom/           Windows UZDoom executable for Proton
 ├── iwads/                         Legal IWAD copies from Steam app {APPID_DOOM_PLUS_DOOM_II}
 ├── pwads/                         User PWADs and map packs
 ├── mods/brutal-doom/              Managed Brutal Doom .pk3 and update metadata
 ├── mods/project-brutality/         Downloaded Project Brutality .pk3
 ├── configs/doomrunner/            Generated manifest and Doom Runner setup guide
 ├── configs/uzdoom/                Classic and modern UZDoom config templates
-├── launchers/                     Direct generated preset shell launchers
+├── launchers/                     Generated preset helper scripts and launch metadata
 ├── saves/                         Save-game location for future use
 ├── screenshots/                   Screenshot location for future use
 ├── downloads/                     Downloaded upstream release assets
@@ -1135,6 +1185,8 @@ Generated by `doomdeck`.
 """
     )
     steam_input = f"""# Steam Input Profiles for Doom Runner / UZDoom
+
+DoomDeck installs the Windows builds of Doom Runner and UZDoom and forces generated Steam shortcuts to use the configured Steam compatibility tool. The default is `proton_10`. Steam Input should present Steam Deck, Xbox, PlayStation, and other supported controllers to Windows UZDoom as a gamepad.
 
 The generated UZDoom configs enable joystick input and bind common Steam Deck gamepad buttons directly. Steam's standard Gamepad layout should work for the generated presets; use Steam's controller configurator only if you want a custom layout.
 
@@ -1176,31 +1228,29 @@ The generated `configs/uzdoom/modern/autoexec.cfg` enables freelook, jump, crouc
     live_options_primary = doomrunner_options_paths(dirs)[0]
     doomrunner_guide = f"""# Doom Runner Setup Guide
 
-DoomDeck installs Doom Runner and UZDoom, copies Steam IWADs, creates direct shell launchers, writes Doom Runner's live options file, and writes a stable preset manifest:
+DoomDeck installs the Windows builds of Doom Runner and UZDoom, copies Steam IWADs, creates Steam shortcuts that run through Proton, writes Doom Runner's generated options file, and writes a stable preset manifest:
 
 `{live_options_primary}`
 
 `{dirs.doomrunner_config / 'preset-manifest.json'}`
 
-Doom Runner should open with the generated UZDoom engine, IWADs, and presets already listed. Existing live Doom Runner options are backed up under:
+DoomDeck also writes a Doom Runner options copy into the generated Steam shortcut's Proton prefix when Steam shortcut creation is enabled.
+
+Doom Runner should open through Steam/Proton with the generated UZDoom engine, IWADs, and presets already listed. Existing generated Doom Runner options are backed up under:
 
 `{dirs.backups}`
 
 ## Initial Doom Runner check
 
-1. Launch `Doom Runner` from Steam Gaming Mode or run:
-
-   ```bash
-   {dirs.launchers / 'doom-runner.sh'}
-   ```
+1. Launch `Doom Runner` from Steam Gaming Mode.
 
 2. Confirm this engine exists:
 
    - Engine name: `UZDoom`
-   - Executable path: `{dirs.uzdoom / 'uzdoom.sh'}`
+   - Executable path: `{proton_windows_path(dirs.uzdoom / 'uzdoom.exe')}`
    - Engine family: `UZDoom` if shown, otherwise `ZDoom` / `GZDoom-family`
-   - Config directory: `{dirs.uzdoom_config}`
-   - Data directory: `{dirs.root}`
+   - Config directory: `{proton_windows_path(dirs.uzdoom_config)}`
+   - Data directory: `{proton_windows_path(dirs.root)}`
 
 3. Confirm IWADs are listed from:
 
@@ -1222,7 +1272,7 @@ Doom Runner should open with the generated UZDoom engine, IWADs, and presets alr
     doomrunner_guide += """
 ## Direct launchers
 
-The scripts in `launchers/` can be added to Steam individually if you later decide you want one-click launches for each preset instead of launching Doom Runner first.
+DoomDeck creates Steam shortcuts named `DoomDeck - <preset>` for one-click preset launches. The scripts in `launchers/` are helper placeholders that point you back to those Steam shortcuts so Windows UZDoom runs through Proton with Steam Input.
 """
     brutal = f"""# Brutal Doom
 
@@ -1320,7 +1370,7 @@ def shutdown_steam(logger: logging.Logger, dry_run: bool) -> None:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(8)
             return
-    logger.warning("Steam command not found; close Steam manually before modifying shortcuts.vdf")
+    logger.warning("Steam command not found; close Steam manually before modifying Steam shortcut and compatibility files")
 
 
 def add_or_update_steam_shortcut(
@@ -1331,7 +1381,9 @@ def add_or_update_steam_shortcut(
     dirs: Dirs,
     args: argparse.Namespace,
     logger: logging.Logger,
-) -> None:
+    launch_options: str = "",
+    match_exe: bool = True,
+) -> int:
     if is_process_running(["steamwebhelper", "steam -", "/steam"]):
         if args.shutdown_steam:
             shutdown_steam(logger, args.dry_run)
@@ -1341,25 +1393,45 @@ def add_or_update_steam_shortcut(
                 "or use --skip-steam-shortcut."
             )
         else:
-            logger.warning("Steam appears to be running; modifying shortcuts.vdf anyway because --allow-steam-running was set")
+            logger.warning("Steam appears to be running; modifying Steam shortcut and compatibility files anyway because --allow-steam-running was set")
 
     shortcuts_path.parent.mkdir(parents=True, exist_ok=True)
     if shortcuts_path.exists():
         backup_path(shortcuts_path, dirs.backups, args.dry_run, logger, label="shortcuts.vdf")
     root = load_shortcuts(shortcuts_path)
-    result = upsert_shortcut(root, appname, exe, start_dir, tags=["Doom", "Tools"])
+    result = upsert_shortcut(root, appname, exe, start_dir, tags=["Doom", "Tools"], launch_options=launch_options, match_exe=match_exe)
     if result.created:
         logger.info("Add Steam shortcut %s at index %s in %s", appname, result.key, shortcuts_path)
     else:
         logger.info("Update existing Steam shortcut %s in %s", appname, shortcuts_path)
     atomic_write_bytes(shortcuts_path, BinaryVDF.dumps(root), args.dry_run, logger)
+    compat_tool = getattr(args, "proton_compat_tool", "")
+    if compat_tool:
+        add_or_update_steam_compat_mapping(shortcuts_path.parent / "localconfig.vdf", result.appid, compat_tool, dirs, args, logger)
+    return result.appid
+
+
+def add_or_update_steam_compat_mapping(
+    localconfig_path: Path,
+    appid: int,
+    compat_tool: str,
+    dirs: Dirs,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> None:
+    if localconfig_path.exists():
+        backup_path(localconfig_path, dirs.backups, args.dry_run, logger, label="localconfig.vdf")
+    logger.info("Set Steam compatibility tool for appid %s to %s in %s", appid, compat_tool, localconfig_path)
+    root = load_text_vdf(localconfig_path)
+    set_compat_tool_mapping(root, appid, compat_tool)
+    atomic_write_text(localconfig_path, dumps_text_vdf(root), args.dry_run, logger)
 
 
 def write_experimental_doomrunner_note(dirs: Dirs, args: argparse.Namespace, dry_run: bool, logger: logging.Logger) -> None:
     note: dict[str, object] = {
-        "note": "Live Doom Runner options.json generation is enabled by default.",
-        "primary_options_json": str(doomrunner_options_paths(dirs)[0]),
-        "compatibility_options_json": str(doomrunner_options_paths(dirs)[1]),
+        "note": "Generated Doom Runner options.json copies are enabled by default.",
+        "managed_options_json": str(doomrunner_options_paths(dirs)[0]),
+        "managed_compatibility_options_json": str(doomrunner_options_paths(dirs)[1]),
         "backup_directory": str(dirs.backups),
         "generated_from": [
             str(dirs.doomrunner_config / "preset-manifest.json"),
@@ -1368,7 +1440,7 @@ def write_experimental_doomrunner_note(dirs: Dirs, args: argparse.Namespace, dry
     }
     if args.experimental_doomrunner_config:
         note["experimental_requested"] = True
-        note["result"] = "This flag is kept for compatibility; live options.json is now written by default."
+        note["result"] = "This flag is kept for compatibility; generated options.json copies are now written by default."
     atomic_write_text(dirs.doomrunner_config / "options-json-policy.json", json.dumps(note, indent=2) + "\n", dry_run, logger)
 
 
@@ -1391,23 +1463,24 @@ def install(args: argparse.Namespace) -> int:
     for directory in all_managed_dirs(dirs):
         ensure_dir(directory, args.dry_run, logger)
 
-    install_appimage_from_github(
+    install_windows_app_from_github(
         "Youda008/DoomRunner",
-        dirs.doomrunner / "DoomRunner.AppImage",
+        dirs.doomrunner,
+        "DoomRunner.exe",
         dirs,
         args,
         logger,
         explicit_url=args.doomrunner_asset_url,
     )
-    install_appimage_from_github(
+    install_windows_app_from_github(
         "UZDoom/UZDoom",
-        dirs.uzdoom / "uzdoom.AppImage",
+        dirs.uzdoom,
+        "uzdoom.exe",
         dirs,
         args,
         logger,
         explicit_url=args.uzdoom_asset_url,
     )
-    write_wrappers(dirs, args.dry_run, logger)
     write_uzdoom_configs(dirs, args.dry_run, logger)
 
     if steam.app_install_dir:
@@ -1436,23 +1509,41 @@ def install(args: argparse.Namespace) -> int:
         logger.warning("Project Brutality is not installed. Rerun without --skip-downloads/--skip-project-brutality or use --project-brutality-file.")
 
     manifest = write_launchers_and_manifest(dirs, brutal_path, project_brutality_path, args.dry_run, logger)
-    write_doomrunner_live_config(dirs, manifest, args, logger)
     write_docs(dirs, manifest, brutal_path, project_brutality_path, args.dry_run, logger)
     write_experimental_doomrunner_note(dirs, args, args.dry_run, logger)
 
+    extra_doomrunner_options_paths: list[Path] = []
     if not args.skip_steam_shortcut:
         if not steam.shortcuts_vdf:
             raise DoomDeckError("Could not locate Steam userdata/config/shortcuts.vdf path. Use --steam-root and/or --steam-user-id.")
-        add_or_update_steam_shortcut(
+        doomrunner_appid = add_or_update_steam_shortcut(
             steam.shortcuts_vdf,
             "Doom Runner",
-            dirs.launchers / "doom-runner.sh",
-            dirs.root,
+            dirs.doomrunner / "DoomRunner.exe",
+            dirs.doomrunner,
             dirs,
             args,
             logger,
         )
+        proton_options = doomrunner_proton_options_path(steam, doomrunner_appid)
+        if proton_options:
+            extra_doomrunner_options_paths.append(proton_options)
+        for preset in manifest.get("presets", []):
+            add_or_update_steam_shortcut(
+                steam.shortcuts_vdf,
+                str(preset["steam_shortcut_name"]),
+                dirs.uzdoom / "uzdoom.exe",
+                dirs.uzdoom,
+                dirs,
+                args,
+                logger,
+                launch_options=str(preset["launch_options"]),
+                match_exe=False,
+            )
         logger.info("Restart Steam before expecting the non-Steam shortcut to appear in Gaming Mode")
+
+    args.extra_doomrunner_options_paths = tuple(extra_doomrunner_options_paths)
+    write_doomrunner_live_config(dirs, manifest, args, logger)
 
     report = validate_internal(args, dirs, steam, logger, print_report=True)
     return 1 if validation_has_failures(report) else 0
@@ -1617,13 +1708,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser("install", help="Install/update the managed Doom setup")
     add_common_args(install_parser)
-    install_parser.add_argument("--skip-downloads", action="store_true", help="Do not download AppImages or managed mod archives; reuse files already in place")
+    install_parser.add_argument("--skip-downloads", action="store_true", help="Do not download Windows tools or managed mod archives; reuse files already in place")
     install_parser.add_argument("--force-download", action="store_true", help="Redownload release assets and managed mod archives even if present in downloads/")
-    install_parser.add_argument("--doomrunner-asset-url", help="Explicit Doom Runner AppImage URL override")
-    install_parser.add_argument("--uzdoom-asset-url", help="Explicit UZDoom AppImage URL override")
+    install_parser.add_argument("--doomrunner-asset-url", help="Explicit Doom Runner Windows ZIP URL override")
+    install_parser.add_argument("--uzdoom-asset-url", help="Explicit UZDoom Windows ZIP URL override")
     install_parser.add_argument("--brutal-doom-url", help="Explicit Brutal Doom .pk3/.zip download URL override")
     install_parser.add_argument("--project-brutality-url", help="Explicit Project Brutality .pk3/.zip download URL override")
-    install_parser.add_argument("--prefer-legacy-appimage", action="store_true", help="Prefer Legacy AppImage assets when available")
+    install_parser.add_argument("--prefer-legacy-appimage", action="store_true", help="Deprecated compatibility flag; Windows ZIP assets are now used")
+    install_parser.add_argument(
+        "--proton-compat-tool",
+        default="proton_10",
+        help="Steam compatibility tool name to force for generated Windows shortcuts",
+    )
     install_parser.add_argument(
         "--brutal-doom-channel",
         choices=["latest", "stable"],
@@ -1634,14 +1730,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     install_parser.add_argument("--project-brutality-file", help="Path to a manually downloaded Project Brutality .pk3/.wad/.zip")
     install_parser.add_argument("--skip-brutal-doom", action="store_true", help="Do not download, update, or install Brutal Doom")
     install_parser.add_argument("--skip-project-brutality", action="store_true", help="Do not download or install Project Brutality")
-    install_parser.add_argument("--skip-steam-shortcut", action="store_true", help="Do not modify Steam shortcuts.vdf")
-    install_parser.add_argument("--skip-doomrunner-live-config", action="store_true", help="Do not write Doom Runner's live options.json")
-    install_parser.add_argument("--shutdown-steam", action="store_true", help="Attempt to shut down Steam before modifying shortcuts.vdf")
-    install_parser.add_argument("--allow-steam-running", action="store_true", help="Modify shortcuts.vdf even if Steam appears to be running")
+    install_parser.add_argument("--skip-steam-shortcut", action="store_true", help="Do not modify Steam shortcuts.vdf or Proton compatibility mapping")
+    install_parser.add_argument("--skip-doomrunner-live-config", action="store_true", help="Do not write Doom Runner generated options.json copies")
+    install_parser.add_argument("--shutdown-steam", action="store_true", help="Attempt to shut down Steam before modifying shortcut and compatibility files")
+    install_parser.add_argument("--allow-steam-running", action="store_true", help="Modify Steam shortcut and compatibility files even if Steam appears to be running")
     install_parser.add_argument(
         "--experimental-doomrunner-config",
         action="store_true",
-        help="Deprecated compatibility flag; live Doom Runner options.json is now written by default",
+        help="Deprecated compatibility flag; generated Doom Runner options.json copies are now written by default",
     )
     install_parser.set_defaults(func=install)
 

@@ -15,6 +15,7 @@ from doomdeck.infrastructure.binary_vdf import BKV_INT32, BKV_OBJECT, BKV_STRING
 class ShortcutUpsertResult:
     key: str
     created: bool
+    appid: int
 
 
 def steam_quote_path(path: Path) -> str:
@@ -58,17 +59,18 @@ def get_bkv_str(obj: OrderedDict[str, BKVValue], *names: str) -> str:
     return ""
 
 
-def make_shortcut_entry(appname: str, exe: Path, start_dir: Path, tags: list[str]) -> BKVValue:
+def make_shortcut_entry(appname: str, exe: Path, start_dir: Path, tags: list[str], launch_options: str = "") -> BKVValue:
     exe_value = steam_quote_path(exe)
     start_dir_value = steam_quote_path(start_dir)
+    appid = generate_shortcut_appid(exe_value, appname)
     fields: OrderedDict[str, BKVValue] = OrderedDict()
-    fields["appid"] = BKVValue(BKV_INT32, generate_shortcut_appid(exe_value, appname))
+    fields["appid"] = BKVValue(BKV_INT32, appid)
     fields["appname"] = BKVValue(BKV_STRING, appname)
     fields["exe"] = BKVValue(BKV_STRING, exe_value)
     fields["StartDir"] = BKVValue(BKV_STRING, start_dir_value)
     fields["icon"] = BKVValue(BKV_STRING, "")
     fields["ShortcutPath"] = BKVValue(BKV_STRING, "")
-    fields["LaunchOptions"] = BKVValue(BKV_STRING, "")
+    fields["LaunchOptions"] = BKVValue(BKV_STRING, launch_options)
     fields["IsHidden"] = BKVValue(BKV_INT32, 0)
     fields["AllowDesktopConfig"] = BKVValue(BKV_INT32, 1)
     fields["AllowOverlay"] = BKVValue(BKV_INT32, 1)
@@ -91,6 +93,8 @@ def upsert_shortcut(
     exe: Path,
     start_dir: Path,
     tags: list[str],
+    launch_options: str = "",
+    match_exe: bool = True,
 ) -> ShortcutUpsertResult:
     shortcuts = shortcut_entries(root)
     target_exe = steam_quote_path(exe)
@@ -101,14 +105,16 @@ def upsert_shortcut(
         entry = cast(OrderedDict[str, BKVValue], value.value)
         existing_name = get_bkv_str(entry, "appname", "AppName")
         existing_exe = get_bkv_str(entry, "exe", "Exe")
-        if existing_name == appname or existing_exe == target_exe:
+        if existing_name == appname or (match_exe and existing_exe == target_exe):
             existing_key = key
             break
 
-    entry_value = make_shortcut_entry(appname, exe, start_dir, tags=tags)
+    entry_value = make_shortcut_entry(appname, exe, start_dir, tags=tags, launch_options=launch_options)
+    appid_value = cast(OrderedDict[str, BKVValue], entry_value.value)["appid"].value
+    appid = int(appid_value)
     if existing_key is not None:
         shortcuts[existing_key] = entry_value
-        return ShortcutUpsertResult(existing_key, created=False)
+        return ShortcutUpsertResult(existing_key, created=False, appid=appid)
 
     used = {int(key) for key in shortcuts.keys() if key.isdigit()}
     index = 0
@@ -116,4 +122,4 @@ def upsert_shortcut(
         index += 1
     key = str(index)
     shortcuts[key] = entry_value
-    return ShortcutUpsertResult(key, created=True)
+    return ShortcutUpsertResult(key, created=True, appid=appid)

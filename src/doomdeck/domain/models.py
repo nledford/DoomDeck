@@ -44,6 +44,7 @@ class SteamInfo:
     shortcuts_vdf: Optional[Path]
     library_folders: list[Path]
     app_install_dir: Optional[Path]
+    localconfig_vdf: Optional[Path] = None
 
 
 @dataclasses.dataclass

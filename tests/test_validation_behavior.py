@@ -19,7 +19,6 @@ from doomdeck.cli import (
     write_doomrunner_live_config,
     write_launchers_and_manifest,
     write_uzdoom_configs,
-    write_wrappers,
 )
 from doomdeck.domain.models import SteamInfo
 from doomdeck.domain.paths import all_managed_dirs, build_dirs
@@ -99,7 +98,7 @@ def test_validation_reports_non_object_json_configs_without_crashing(tmp_path: P
 
     messages = {item.message for item in report}
     assert f"Preset manifest JSON must be an object: {manifest_path}" in messages
-    assert f"Doom Runner live options JSON must be an object: {live_options_path}" in messages
+    assert f"Doom Runner generated options JSON must be an object: {live_options_path}" in messages
 
 
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,8 +109,8 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     for directory in all_managed_dirs(dirs):
         directory.mkdir(parents=True, exist_ok=True)
 
-    make_executable(dirs.doomrunner / "DoomRunner.AppImage")
-    make_executable(dirs.uzdoom / "uzdoom.AppImage")
+    (dirs.doomrunner / "DoomRunner.exe").write_bytes(b"exe")
+    (dirs.uzdoom / "uzdoom.exe").write_bytes(b"exe")
     (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
     (dirs.brutal / "brutal-doom.pk3").write_bytes(b"brutal")
     (dirs.brutal / "brutal-doom.json").write_text("{}", encoding="utf-8")
@@ -121,7 +120,6 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     (dirs.project_brutality / "project-brutality.json").write_text("{}", encoding="utf-8")
     (dirs.backups / "existing-backup").write_text("", encoding="utf-8")
 
-    write_wrappers(dirs, dry_run=False, logger=logger)
     write_uzdoom_configs(dirs, dry_run=False, logger=logger)
     manifest = write_launchers_and_manifest(
         dirs,
@@ -139,5 +137,5 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     failures = [item.message for item in report if item.level == "FAIL"]
     assert failures == []
     assert any("Preset manifest includes Project Brutality preset" in item.message for item in report)
-    assert any("Doom Runner live config has launchable presets" in item.message for item in report)
+    assert any("Doom Runner generated config has launchable presets" in item.message for item in report)
     assert any("Project Brutality archive has expected UZDoom root files" in item.message for item in report)
