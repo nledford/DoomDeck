@@ -15,9 +15,9 @@ In plain terms, it:
 - Downloads or installs Brutal Doom.
 - Downloads or installs Project Brutality.
 - Creates ready-to-use Doom Runner presets.
-- Creates Steam shortcuts for Doom Runner and direct vanilla-style Doom, UZDoom, Brutal Doom, and Project Brutality launches.
+- Creates exactly one Steam shortcut for Doom Runner, with all generated presets available inside Doom Runner.
 - Writes Steam Deck-friendly UZDoom controller, display, and graphics settings.
-- Forces generated Windows shortcuts to use Steam Proton by default, so Steam Input can expose Deck, Xbox, PlayStation, and other supported controllers to UZDoom as gamepads.
+- Forces the generated Doom Runner shortcut to use Steam Proton by default, so Steam Input can expose Deck, Xbox, PlayStation, and other supported controllers to UZDoom as gamepads.
 - Backs up files before replacing important generated files or modifying Steam shortcut/config files.
 
 The tool is designed to be rerun. If you already ran it once, running it again updates the setup and reuses files that are already current.
@@ -91,7 +91,7 @@ From the repo folder:
 uv run doomdeck install
 ```
 
-After it finishes, restart Steam. Doom Runner and `DoomDeck - <preset>` entries should appear as non-Steam games. Launch a direct preset shortcut for the most reliable controller path, or launch Doom Runner if you want to choose presets from its UI.
+After it finishes, restart Steam. A single `Doom Runner` non-Steam game should appear. Launch Doom Runner from Steam, then choose `Vanilla Doom`, `UZDoom`, `Brutal Doom`, `Project Brutality`, or any other generated preset from Doom Runner's UI.
 
 To check the setup later:
 
@@ -129,7 +129,7 @@ Important subfolders include:
 - `mods/project-brutality/` - Project Brutality files and metadata.
 - `configs/doomrunner/` - Generated Doom Runner manifest and policy files.
 - `configs/uzdoom/` - Generated UZDoom configs.
-- `launchers/` - Helper scripts and launch metadata for generated Steam preset shortcuts.
+- `launchers/` - Helper scripts for generated presets. These are not added to Steam.
 - `saves/` - Save-game folders used by presets.
 - `screenshots/` - Screenshot folders used by presets.
 - `downloads/` - Downloaded upstream files.
@@ -186,7 +186,7 @@ Basic install:
 doomdeck install
 ```
 
-The `install` command creates the folder layout, installs Windows Doom tools, copies Doom files from Steam, writes configs, creates presets, installs mods, and adds Steam shortcuts that run through Proton.
+The `install` command creates the folder layout, installs Windows Doom tools, copies Doom files from Steam, writes configs, creates presets, installs mods, and adds one Doom Runner Steam shortcut that runs through Proton.
 
 | Option | What it means | When to use it |
 | --- | --- | --- |
@@ -197,14 +197,14 @@ The `install` command creates the folder layout, installs Windows Doom tools, co
 | `--brutal-doom-url URL` | Downloads Brutal Doom from a specific `.pk3` or `.zip` URL. | Use this if ModDB auto-discovery fails or you want a known exact file. |
 | `--project-brutality-url URL` | Downloads Project Brutality from a specific `.pk3` or `.zip` URL. | Use this if GitHub auto-selection is not what you want. |
 | `--prefer-legacy-appimage` | Deprecated compatibility flag. Windows ZIP assets are now used. | You usually do not need this. |
-| `--proton-compat-tool TOOL` | Sets the Steam compatibility tool for generated Windows shortcuts. Default: `proton_10`. | Use this to try another Steam tool such as `proton_experimental` if the default has a compatibility issue. |
+| `--proton-compat-tool TOOL` | Sets the Steam compatibility tool for the generated Doom Runner shortcut. Default: `proton_10`. | Use this to try another Steam tool such as `proton_experimental` if the default has a compatibility issue. |
 | `--brutal-doom-channel latest` | Lets DoomDeck pick the newest Brutal Doom candidate it can find, including beta or test builds. This is the default. | Use this if you want the newest available Brutal Doom build. |
 | `--brutal-doom-channel stable` | Prefers non-beta Brutal Doom candidates. | Use this if you prefer a less experimental Brutal Doom version. |
 | `--brutal-doom-file PATH` | Installs Brutal Doom from a local `.pk3`, `.wad`, or `.zip` file. | Use this if you downloaded Brutal Doom manually in a browser. |
 | `--project-brutality-file PATH` | Installs Project Brutality from a local `.pk3`, `.wad`, or `.zip` file. | Use this if you downloaded Project Brutality manually. |
 | `--skip-brutal-doom` | Does not download, update, or install Brutal Doom. If an existing managed Brutal Doom file exists, it can still be used. | Use this if you only want vanilla UZDoom or Project Brutality. |
 | `--skip-project-brutality` | Does not download or install Project Brutality. If an existing managed Project Brutality file exists, it can still be used. | Use this if you only want vanilla UZDoom or Brutal Doom. |
-| `--skip-steam-shortcut` | Does not edit Steam's `shortcuts.vdf` or Proton compatibility mapping. | Use this if you do not want DoomDeck to add Doom Runner or preset shortcuts to Steam. |
+| `--skip-steam-shortcut` | Does not edit Steam's `shortcuts.vdf` or Proton compatibility mapping. | Use this if you do not want DoomDeck to add Doom Runner to Steam. |
 | `--skip-doomrunner-live-config` | Does not write Doom Runner's generated `options.json` copies. | Use this if you already customized Doom Runner and do not want DoomDeck to overwrite generated settings. Existing options are backed up when rewritten, but this avoids touching them at all. |
 | `--shutdown-steam` | Attempts to shut down Steam before editing `shortcuts.vdf` and `localconfig.vdf`. | Use this if Steam is running and you want the script to close it before adding or updating shortcuts. |
 | `--allow-steam-running` | Allows Steam config modification even if Steam appears to be running. | Use this only if you understand the risk. Steam can overwrite shortcut or compatibility changes while it is open. |
@@ -277,7 +277,7 @@ Basic validation:
 doomdeck validate
 ```
 
-`validate` checks for the generated folder layout, Windows Doom Runner and UZDoom executables, IWADs, add-on WADs, mod aliases, preset manifest, Doom Runner options, UZDoom configs, shell script syntax, Steam detection, generated Steam shortcuts, Proton compatibility mapping, and backups.
+`validate` checks for the generated folder layout, Windows Doom Runner and UZDoom executables, IWADs, add-on WADs, mod aliases, preset manifest, Doom Runner options, UZDoom configs, shell script syntax, Steam detection, the single generated Doom Runner Steam shortcut, Proton compatibility mapping, and backups.
 
 It prints results as:
 
@@ -387,7 +387,7 @@ If detection fails, pass `--steam-root` or `--steam-user-id`.
 
 If Steam is running, DoomDeck normally refuses to edit Steam shortcut and compatibility files because Steam may overwrite changes. Close Steam first, use `--shutdown-steam`, or use `--skip-steam-shortcut`.
 
-After adding or updating Steam shortcuts, restart Steam before expecting Doom Runner and `DoomDeck - <preset>` entries to appear in Gaming Mode.
+After adding or updating the Steam shortcut, restart Steam before expecting `Doom Runner` to appear in Gaming Mode.
 
 ## Mod Notes
 
