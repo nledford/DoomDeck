@@ -97,7 +97,7 @@ class CLIBehaviorTests(unittest.TestCase):
     def test_parser_exposes_maintenance_commands(self) -> None:
         parser = build_arg_parser()
 
-        for command in ["validate", "backup", "clean", "restore"]:
+        for command in ["validate", "backup", "clean", "restore", "self-update"]:
             with self.subTest(command=command):
                 argv = [command, "archive.tar.gz"] if command == "restore" else [command]
                 args = parser.parse_args(argv)
@@ -106,6 +106,44 @@ class CLIBehaviorTests(unittest.TestCase):
 
     def test_top_level_help_mentions_install_wads_command(self) -> None:
         self.assertIn("install-wads", build_arg_parser().format_help())
+
+    def test_self_update_parser_accepts_check_and_ref_options(self) -> None:
+        args = build_arg_parser().parse_args(
+            [
+                "self-update",
+                "--check",
+                "--ref",
+                "main",
+                "--install-dir",
+                "/tmp/doomdeck/source",
+            ]
+        )
+
+        self.assertEqual(args.command, "self-update")
+        self.assertTrue(args.check)
+        self.assertEqual(args.ref, "main")
+        self.assertEqual(args.install_dir, "/tmp/doomdeck/source")
+
+    def test_self_update_check_does_not_download_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_dir = Path(temp_dir) / "source"
+            (install_dir / "src" / "doomdeck").mkdir(parents=True)
+            (install_dir / "pyproject.toml").write_text("[project]\nname = 'doomdeck'\n", encoding="utf-8")
+
+            with patch("doomdeck.cli.download_url") as download:
+                result = main(
+                    [
+                        "self-update",
+                        "--check",
+                        "--install-dir",
+                        str(install_dir),
+                        "--archive-url",
+                        "https://example.test/doomdeck.tar.gz",
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            download.assert_not_called()
 
     def test_release_asset_selection_rejects_assets_missing_download_urls(self) -> None:
         release = {

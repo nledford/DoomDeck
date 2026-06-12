@@ -33,12 +33,15 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from doomdeck import __version__
 from doomdeck.application.content_groups import build_content_group_document
 from doomdeck.application.doomrunner import (
     build_doomrunner_options,
@@ -55,6 +58,16 @@ from doomdeck.application.moddb_wads import install_moddb_wad_urls
 from doomdeck.application.presets import build_preset_manifest
 from doomdeck.application.presets import choose_default_preset_iwad as _choose_default_preset_iwad
 from doomdeck.application.proton import build_uzdoom_launch_options, proton_windows_path
+from doomdeck.application.self_update import (
+    DEFAULT_SELF_UPDATE_REF,
+    DEFAULT_SELF_UPDATE_REPO_URL,
+    build_self_update_archive_url,
+    build_self_update_plan,
+    find_extracted_self_update_source_dir,
+    infer_source_install_dir,
+    replace_self_update_install_dir,
+    validate_self_update_source_dir,
+)
 from doomdeck.application.validation import InstallationValidator, format_validation_report, validation_has_failures
 from doomdeck.application.wads import find_wads_in_install
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
@@ -156,6 +169,18 @@ def configure_logging(dirs: Dirs, verbose: bool, dry_run: bool) -> logging.Logge
         logger.info("Logging to %s", logfile)
     else:
         logger.info("Dry run: no log file will be written")
+    return logger
+
+
+def configure_console_logging(verbose: bool) -> logging.Logger:
+    logger = logging.getLogger("doom_deck_setup")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(console)
     return logger
 
 
@@ -1692,6 +1717,92 @@ def restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def resolve_self_update_install_dir(explicit_install_dir: Optional[str]) -> Path:
+    if explicit_install_dir:
+        return expand_path(explicit_install_dir)
+    env_install_dir = os.environ.get("DOOMDECK_INSTALL_DIR")
+    if env_install_dir:
+        return expand_path(env_install_dir)
+    return infer_source_install_dir(Path(__file__))
+
+
+def self_update_archive_allowed_hosts(archive_url: str, explicit_archive_url: Optional[str]) -> Optional[set[str]]:
+    if explicit_archive_url:
+        return None
+    hostname = (urllib.parse.urlparse(archive_url).hostname or "").lower()
+    return {hostname} if hostname else None
+
+
+def smoke_test_self_update_source(source_dir: Path, logger: logging.Logger) -> None:
+    env = os.environ.copy()
+    src_path = str(source_dir / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_path
+    cmd = [sys.executable, "-m", "doomdeck", "--help"]
+    logger.debug("Run self-update smoke test: %s", " ".join(cmd))
+    result = subprocess.run(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise DoomDeckError(
+            "Downloaded DoomDeck source failed its import smoke test "
+            f"({result.returncode}).\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+
+
+def self_update(args: argparse.Namespace) -> int:
+    logger = configure_console_logging(args.verbose)
+    install_dir = resolve_self_update_install_dir(args.install_dir)
+    archive_url = build_self_update_archive_url(args.repo_url, args.ref, args.archive_url)
+    plan = build_self_update_plan(install_dir, archive_url)
+    validate_self_update_source_dir(install_dir)
+
+    if args.check:
+        print_plan(
+            "DoomDeck self-update check",
+            [
+                f"Current version: {__version__}",
+                f"Current source: {install_dir}",
+                f"Update archive: {archive_url}",
+                "Current source directory looks like a managed source-archive install",
+            ],
+        )
+        return 0
+
+    print_plan("Planned self-update actions", plan.render_actions())
+    if args.dry_run:
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="doomdeck-self-update.") as temp_dir:
+        temp_root = Path(temp_dir)
+        archive_path = temp_root / "doomdeck.tar.gz"
+        extract_dir = temp_root / "extract"
+        staged_install_dir = temp_root / "source"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        download_url(
+            archive_url,
+            archive_path,
+            False,
+            logger,
+            force=True,
+            allowed_hosts=self_update_archive_allowed_hosts(archive_url, args.archive_url),
+        )
+        with tarfile.open(archive_path, "r:gz") as archive:
+            safe_extract_tar(archive, extract_dir)
+        source_dir = find_extracted_self_update_source_dir(extract_dir)
+        shutil.copytree(source_dir, staged_install_dir)
+        smoke_test_self_update_source(staged_install_dir, logger)
+        replace_self_update_install_dir(staged_install_dir, install_dir)
+
+    logger.info("Updated DoomDeck source install at %s", install_dir)
+    return 0
+
+
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default=str(DEFAULT_ROOT), help=f"Managed Doom root directory (default: {DEFAULT_ROOT})")
     parser.add_argument("--steam-root", help="Steam root override, e.g. ~/.local/share/Steam")
@@ -1774,6 +1885,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     add_common_args(restore_parser)
     restore_parser.add_argument("backup_archive", help="Path to a backup tar.gz archive")
     restore_parser.set_defaults(func=restore)
+
+    self_update_parser = subparsers.add_parser("self-update", help="Update the DoomDeck command installed by install.sh")
+    self_update_parser.add_argument("--check", action="store_true", help="Show the current source path and update archive without downloading")
+    self_update_parser.add_argument("--dry-run", action="store_true", help="Print intended update actions without downloading or writing files")
+    self_update_parser.add_argument("--verbose", action="store_true", help="Enable debug logging to console")
+    self_update_parser.add_argument(
+        "--repo-url",
+        default=DEFAULT_SELF_UPDATE_REPO_URL,
+        help="GitHub repository URL used to build the default source archive URL",
+    )
+    self_update_parser.add_argument(
+        "--ref",
+        default=DEFAULT_SELF_UPDATE_REF,
+        help="Branch name used to build the default source archive URL",
+    )
+    self_update_parser.add_argument("--archive-url", help="Explicit DoomDeck source archive URL override")
+    self_update_parser.add_argument("--install-dir", help="DoomDeck source install directory override")
+    self_update_parser.set_defaults(func=self_update)
 
     return parser
 
