@@ -47,6 +47,12 @@ doomdeck install
 
 The installer downloads the GitHub source archive, stores it under `~/.local/share/doomdeck/source`, and creates a `doomdeck` command in `~/.local/bin`.
 
+To update that installed DoomDeck command later:
+
+```bash
+doomdeck self-update
+```
+
 From this repo checkout, run commands through uv:
 
 ```bash
@@ -152,10 +158,11 @@ Available commands:
 | `backup` | Creates a `.tar.gz` backup of the managed Doom folder. | Use this before large manual changes or before experimenting. |
 | `clean` | Moves or deletes the managed Doom folder safely. | Use this when you want to remove the generated setup and start over. |
 | `restore` | Restores a backup archive. | Use this to roll back to a previous backed-up managed folder. |
+| `self-update` | Updates the DoomDeck command installed by `install.sh`. | Use this when you want the latest DoomDeck application code without rerunning the shell installer. |
 
 ## Common Options
 
-These options work with every command:
+These options work with the managed Doom setup commands: `install`, `install-wads`, `validate`, `backup`, `clean`, and `restore`.
 
 | Option | What it means | When to use it |
 | --- | --- | --- |
@@ -238,6 +245,30 @@ doomdeck install-wads https://www.moddb.com/games/doom/addons/doom-the-way-id-di
 | --- | --- | --- |
 | `moddb_url` | ModDB add-on or file page URL to download and extract `.wad` or `.pk3` map payloads into `pwads/`. Pass multiple URLs to install multiple archives. | Use this when you want to add WADs after the base DoomDeck install. |
 | `--force-download` | Downloads WAD archives again, even if files already exist in `downloads/`. | Use this to refresh a cached archive or force an update from ModDB. |
+
+## `self-update` Options
+
+Basic self-update:
+
+```bash
+doomdeck self-update
+```
+
+`self-update` updates DoomDeck's own source-archive install, normally at `~/.local/share/doomdeck/source`. It downloads the GitHub source archive, extracts it to a temporary directory, runs an import smoke test, and then swaps the managed DoomDeck source directory with rollback support.
+
+It does not change the managed Doom folder, Doom Runner, UZDoom, WADs, mods, presets, saves, or Steam shortcuts. After updating DoomDeck itself, run `doomdeck install` when you want the new application code to refresh the game setup.
+
+If you are running from a Git checkout, use `git pull` instead. `self-update` intentionally refuses to replace checkout directories.
+
+| Option | What it means | When to use it |
+| --- | --- | --- |
+| `--check` | Prints the current DoomDeck version, source path, and update archive without downloading. | Use this to confirm what would be updated. |
+| `--dry-run` | Prints the planned self-update actions without downloading or writing files. | Use this before updating if you want to inspect the target paths. |
+| `--verbose` | Shows more detailed debug logging in the terminal. | Use this when troubleshooting the update. |
+| `--repo-url URL` | Builds the default source archive URL from a different GitHub repository URL. | Use this only when testing a fork. |
+| `--ref REF` | Builds the default source archive URL from a different branch name. Default: `master`. | Use this to update from another branch. |
+| `--archive-url URL` | Downloads a specific DoomDeck source `.tar.gz` archive. | Use this for a known archive URL or non-branch archive. |
+| `--install-dir PATH` | Overrides the DoomDeck source install directory. | Use this only for a custom `install.sh` install location or testing. |
 
 ## `validate` Options
 
