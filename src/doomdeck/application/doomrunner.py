@@ -1,18 +1,35 @@
 """Build Doom Runner options from DoomDeck state."""
 from __future__ import annotations
 
+import dataclasses
+import json
+import logging
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
 from doomdeck.application.proton import proton_windows_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
-from doomdeck.domain.models import Dirs
+from doomdeck.domain.models import Dirs, DoomDeckError
+from doomdeck.domain.presets import Preset, PresetManifest
 from doomdeck.domain.wads import DOOMRUNNER_IWAD_DISPLAY_NAMES, iwad_dest_name
+from doomdeck.infrastructure.files import atomic_write_text, backup_path
+from doomdeck.infrastructure.processes import is_process_running
 
 DOOMRUNNER_OPTIONS_VERSION = "1.9.2"
 DOOMRUNNER_ENGINE_ID = "doomdeck-uzdoom"
 DOOMRUNNER_ENGINE_NAME = "UZDoom"
+PresetInput = Preset | Mapping[str, object]
+ManifestInput = PresetManifest | Mapping[str, object]
+ProcessDetector = Callable[[list[str]], bool]
+
+
+@dataclasses.dataclass(frozen=True)
+class DoomRunnerLiveConfigSettings:
+    dry_run: bool
+    skip: bool = False
+    extra_options_paths: tuple[Path, ...] = ()
 
 
 def launcher_slug(name: str) -> str:
@@ -50,14 +67,50 @@ def choose_doomrunner_default_iwad(iwad_entries: list[dict[str, str]], dirs: Dir
     return iwad_entries[0]["path"] if iwad_entries else ""
 
 
-def build_doomrunner_preset(dirs: Dirs, preset: dict[str, Any]) -> dict[str, Any]:
-    name = str(preset["name"])
+def _preset_name(preset: PresetInput) -> str:
+    if isinstance(preset, Preset):
+        return preset.name
+    return str(preset["name"])
+
+
+def _preset_path(preset: PresetInput, key: str) -> Path:
+    if isinstance(preset, Preset):
+        return getattr(preset, key)
+    return Path(str(preset[key]))
+
+
+def _preset_files(preset: PresetInput) -> tuple[Path, ...]:
+    if isinstance(preset, Preset):
+        return preset.files
+    files = preset.get("files", [])
+    if not isinstance(files, list):
+        return ()
+    return tuple(Path(str(path)) for path in files)
+
+
+def _manifest_presets(manifest: ManifestInput) -> tuple[PresetInput, ...]:
+    if isinstance(manifest, PresetManifest):
+        return manifest.presets
+    presets = manifest.get("presets", [])
+    if not isinstance(presets, list):
+        return ()
+    return tuple(cast(Mapping[str, object], preset) for preset in presets if isinstance(preset, Mapping))
+
+
+def _manifest_content_groups(manifest: ManifestInput) -> object:
+    if isinstance(manifest, PresetManifest):
+        return manifest.content_groups or {}
+    return manifest.get("content_groups", {})
+
+
+def build_doomrunner_preset(dirs: Dirs, preset: PresetInput) -> dict[str, Any]:
+    name = _preset_name(preset)
     slug = launcher_slug(name).lower()
-    config = Path(preset["config"])
-    autoexec = Path(preset["autoexec"])
+    config = _preset_path(preset, "config")
+    autoexec = _preset_path(preset, "autoexec")
     save_dir = dirs.saves / slug
     screenshot_dir = dirs.screenshots / slug
-    mods = [{"path": proton_windows_path(path), "checked": True} for path in preset.get("files", [])]
+    mods = [{"path": proton_windows_path(path), "checked": True} for path in _preset_files(preset)]
     additional_args = (
         f"-noautoload -config {doomrunner_quote_arg(proton_windows_path(config))} "
         f"-savedir {doomrunner_quote_arg(proton_windows_path(save_dir))} +exec {doomrunner_quote_arg(proton_windows_path(autoexec))}"
@@ -66,7 +119,7 @@ def build_doomrunner_preset(dirs: Dirs, preset: dict[str, Any]) -> dict[str, Any
         "name": name,
         "selected_engine": DOOMRUNNER_ENGINE_ID,
         "selected_config": "",
-        "selected_IWAD": proton_windows_path(preset["iwad"]),
+        "selected_IWAD": proton_windows_path(_preset_path(preset, "iwad")),
         "selected_mappacks": [],
         "mods": mods,
         "load_maps_after_mods": False,
@@ -100,9 +153,9 @@ def choose_doomrunner_selected_preset(presets: list[dict[str, Any]]) -> str:
     return str(presets[0]["name"]) if presets else ""
 
 
-def build_doomrunner_options(dirs: Dirs, manifest: dict[str, Any]) -> dict[str, Any]:
+def build_doomrunner_options(dirs: Dirs, manifest: ManifestInput) -> dict[str, Any]:
     iwad_entries = build_doomrunner_iwad_entries(dirs)
-    presets = [build_doomrunner_preset(dirs, preset) for preset in manifest.get("presets", [])]
+    presets = [build_doomrunner_preset(dirs, preset) for preset in _manifest_presets(manifest)]
     return {
         "version": DOOMRUNNER_OPTIONS_VERSION,
         "engines": {
@@ -193,7 +246,7 @@ def build_doomrunner_options(dirs: Dirs, manifest: dict[str, Any]) -> dict[str, 
         },
         "presets": presets,
         "selected_preset": choose_doomrunner_selected_preset(presets),
-        "content_groups": manifest.get("content_groups", {}),
+        "content_groups": _manifest_content_groups(manifest),
         "use_absolute_paths": True,
         "show_engine_output": True,
         "close_on_launch": False,
@@ -223,3 +276,47 @@ def build_doomrunner_options(dirs: Dirs, manifest: dict[str, Any]) -> dict[str, 
         "app_style": None,
         "color_scheme": "system",
     }
+
+
+def write_doomrunner_live_config(
+    dirs: Dirs,
+    manifest: ManifestInput,
+    settings: DoomRunnerLiveConfigSettings,
+    logger: logging.Logger,
+    *,
+    process_detector: ProcessDetector = is_process_running,
+) -> None:
+    if settings.skip:
+        logger.info("Skipping Doom Runner generated options.json copies")
+        return
+    if process_detector(["DoomRunner.exe", "DoomRunner "]):
+        raise DoomDeckError("Doom Runner appears to be running. Close it before rewriting options.json.")
+
+    options = build_doomrunner_options(dirs, manifest)
+    content = json.dumps(options, indent=4) + "\n"
+    for preset in _manifest_presets(manifest):
+        slug = launcher_slug(_preset_name(preset)).lower()
+        if slug:
+            _ensure_dir(dirs.saves / slug, settings.dry_run, logger)
+            _ensure_dir(dirs.screenshots / slug, settings.dry_run, logger)
+
+    for options_path in [*doomrunner_options_paths(dirs), *settings.extra_options_paths]:
+        if options_path.exists():
+            try:
+                current = options_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                current = ""
+            if current == content:
+                logger.info("Doom Runner generated options already current: %s", options_path)
+                continue
+            label = f"doomrunner-options-{options_path.parent.parent.name}.json"
+            backup_path(options_path, dirs.backups, settings.dry_run, logger, label=label)
+        atomic_write_text(options_path, content, settings.dry_run, logger)
+
+
+def _ensure_dir(path: Path, dry_run: bool, logger: logging.Logger) -> None:
+    if path.exists():
+        return
+    logger.info("Create directory: %s", path)
+    if not dry_run:
+        path.mkdir(parents=True, exist_ok=True)

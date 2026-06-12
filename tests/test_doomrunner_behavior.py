@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
+import pytest
+
 from doomdeck.application.doomrunner import (
+    DoomRunnerLiveConfigSettings,
     build_doomrunner_iwad_entries,
     build_doomrunner_options,
     build_doomrunner_preset,
@@ -11,9 +15,12 @@ from doomdeck.application.doomrunner import (
     doomrunner_options_paths,
     doomrunner_quote_arg,
     launcher_slug,
+    write_doomrunner_live_config,
 )
 from doomdeck.application.proton import proton_windows_path
+from doomdeck.domain.models import DoomDeckError
 from doomdeck.domain.paths import build_dirs
+from doomdeck.domain.presets import EngineSpec, Preset, PresetManifest
 
 
 def test_doomrunner_options_are_written_to_data_path_before_config_compatibility_path(tmp_path) -> None:
@@ -111,3 +118,89 @@ def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> N
     assert options["content_groups"] == manifest.get("content_groups", {})
     assert options["video_options"]["resolution_x"] == 1280
     assert options["video_options"]["resolution_y"] == 800
+
+
+def test_doomrunner_options_accept_typed_manifest(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.iwads.mkdir(parents=True)
+    (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    manifest = PresetManifest(
+        generated_at="2026-06-12T12:00:00",
+        root=dirs.root,
+        engine=EngineSpec(
+            name="UZDoom",
+            executable=dirs.uzdoom / "uzdoom.exe",
+            family="UZDoom/ZDoom",
+            config_directory=dirs.uzdoom_config,
+            data_directory=dirs.root,
+        ),
+        iwad_directory=dirs.iwads,
+        pwad_directory=dirs.pwads,
+        mod_directories={"brutal_doom": dirs.brutal},
+        presets=(
+            Preset(
+                name="Brutal Doom",
+                category="Brutal Doom",
+                engine="UZDoom",
+                iwad=dirs.iwads / "DOOM2.WAD",
+                files=(dirs.brutal / "brutal-doom.pk3",),
+                config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
+                autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
+                launcher=dirs.launchers / "Brutal_Doom.sh",
+            ),
+        ),
+        content_groups={"mods": []},
+    )
+
+    options = build_doomrunner_options(dirs, manifest)
+
+    assert options["selected_preset"] == "Brutal Doom"
+    assert options["presets"][0]["mods"] == [{"path": proton_windows_path(dirs.brutal / "brutal-doom.pk3"), "checked": True}]
+    assert options["content_groups"] == {"mods": []}
+
+
+def test_doomrunner_live_config_refuses_to_write_while_doomrunner_is_running(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+
+    with pytest.raises(DoomDeckError, match="Doom Runner appears to be running"):
+        write_doomrunner_live_config(
+            dirs,
+            {"presets": []},
+            DoomRunnerLiveConfigSettings(dry_run=False),
+            logger,
+            process_detector=lambda _patterns: True,
+        )
+
+
+def test_doomrunner_live_config_writes_options_and_preset_directories(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.iwads.mkdir(parents=True)
+    (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    extra_options_path = tmp_path / "compatdata" / "DoomRunner" / "options.json"
+    logger = logging.getLogger("test")
+    manifest = {
+        "presets": [
+            {
+                "name": "Brutal Doom",
+                "iwad": str(dirs.iwads / "DOOM2.WAD"),
+                "files": [str(dirs.brutal / "brutal-doom.pk3")],
+                "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
+                "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
+            },
+        ]
+    }
+
+    write_doomrunner_live_config(
+        dirs,
+        manifest,
+        DoomRunnerLiveConfigSettings(dry_run=False, extra_options_paths=(extra_options_path,)),
+        logger,
+        process_detector=lambda _patterns: False,
+    )
+
+    assert doomrunner_options_paths(dirs)[0].exists()
+    assert doomrunner_options_paths(dirs)[1].exists()
+    assert extra_options_path.exists()
+    assert (dirs.saves / "brutal_doom").is_dir()
+    assert (dirs.screenshots / "brutal_doom").is_dir()

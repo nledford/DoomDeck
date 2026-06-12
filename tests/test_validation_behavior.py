@@ -7,19 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from doomdeck.application.doomrunner import doomrunner_options_paths
+from doomdeck.application.doomrunner import DoomRunnerLiveConfigSettings, doomrunner_options_paths, write_doomrunner_live_config
+from doomdeck.application.launchers import write_launchers_and_manifest
+from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.application.validation import (
     InstallationValidator,
     add_validation_item,
     format_validation_report,
     validation_has_failures,
 )
-from doomdeck.cli import (
-    validate_internal,
-    write_doomrunner_live_config,
-    write_launchers_and_manifest,
-    write_uzdoom_configs,
-)
+from doomdeck.cli import validate_internal
 from doomdeck.domain.models import SteamInfo
 from doomdeck.domain.paths import all_managed_dirs, build_dirs
 
@@ -101,6 +98,35 @@ def test_validation_reports_non_object_json_configs_without_crashing(tmp_path: P
     assert f"Doom Runner generated options JSON must be an object: {live_options_path}" in messages
 
 
+def test_validation_reports_malformed_preset_manifest_without_crashing(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+    args = argparse.Namespace(dry_run=False)
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        """
+{
+  "schema": "doom-deck-setup/preset-manifest/v1",
+  "generated_at": "2026-06-12T12:00:00",
+  "root": "/tmp/Doom",
+  "engine": {},
+  "iwad_directory": "/tmp/Doom/iwads",
+  "pwad_directory": "/tmp/Doom/pwads",
+  "mod_directories": {},
+  "presets": {}
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = validate_internal(args, dirs, SteamInfo(None, None, None, [], None), logger)
+
+    failures = [item.message for item in report if item.level == "FAIL"]
+    assert any("Preset manifest structure is invalid" in failure for failure in failures)
+    assert any("Preset manifest presets must be a list" in failure for failure in failures)
+
+
 def test_uzdoom_configs_bind_quicksave_and_quickload_keys(tmp_path: Path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     logger = logging.getLogger("test")
@@ -140,9 +166,14 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
         dry_run=False,
         logger=logger,
     )
-    monkeypatch.setattr("doomdeck.cli.is_process_running", lambda _patterns: False)
     monkeypatch.setattr("doomdeck.cli.detect_steamos", lambda: (True, "SteamOS test fixture"))
-    write_doomrunner_live_config(dirs, manifest, args, logger)
+    write_doomrunner_live_config(
+        dirs,
+        manifest,
+        DoomRunnerLiveConfigSettings(dry_run=False),
+        logger,
+        process_detector=lambda _patterns: False,
+    )
 
     report = validate_internal(args, dirs, SteamInfo(None, None, None, [], None), logger)
 
