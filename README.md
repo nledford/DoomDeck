@@ -38,13 +38,13 @@ DoomDeck does not require root access. It works in your user folders.
 
 ## Running DoomDeck
 
-Install the latest source version directly from GitHub without PyPI:
+Install the latest source version directly from GitHub:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/nledford/DoomDeck/master/install.sh | sh
 ```
 
-The installer downloads the GitHub source archive, stores it under `~/.local/share/doomdeck/source`, and creates a `doomdeck` command in `~/.local/bin`. This only installs DoomDeck itself; run `doomdeck install` separately when you are ready to create or update the managed Doom setup.
+The installer downloads the GitHub source archive, creates an isolated Python environment under `~/.local/share/doomdeck/source/.venv`, installs DoomDeck's runtime Python dependencies there, and creates a `doomdeck` command in `~/.local/bin`. This only installs DoomDeck itself; run `doomdeck install` separately when you are ready to create or update the managed Doom setup.
 
 The command installed by this method includes the `self-update` subcommand. To update that installed DoomDeck command later:
 
@@ -253,7 +253,7 @@ Basic self-update:
 doomdeck self-update
 ```
 
-`self-update` updates DoomDeck's own source-archive install, normally at `~/.local/share/doomdeck/source`. It downloads the GitHub source archive, extracts it to a temporary directory, runs an import smoke test, and then swaps the managed DoomDeck source directory with rollback support.
+`self-update` updates DoomDeck's own source-archive install, normally at `~/.local/share/doomdeck/source`. It downloads the GitHub source archive, extracts it to a temporary directory, creates a fresh isolated Python environment with DoomDeck's runtime dependencies, runs an import smoke test, and then swaps the managed DoomDeck source directory with rollback support.
 
 It does not change the managed Doom folder, Doom Runner, UZDoom, WADs, mods, presets, saves, or Steam shortcuts. After updating DoomDeck itself, run `doomdeck install` when you want the new application code to refresh the game setup.
 
