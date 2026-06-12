@@ -195,6 +195,8 @@ class InstallationValidator:
                         "bind pad_a +deck_use_select",
                         back_binding,
                         "bind pad_start menu_main",
+                        "bind f6 quicksave",
+                        "bind f9 quickload",
                     ]
                 )
                 add_validation_item(items, "PASS" if controller_ok else "FAIL", f"{profile} UZDoom Steam Deck controller bindings: {autoexec_path}")

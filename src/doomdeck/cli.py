@@ -710,6 +710,8 @@ bind mouse1 +attack
 bind e +use
 bind space +use
 bind tab +showscores
+bind F6 quicksave
+bind F9 quickload
 bind escape menu_main
 bind enter menu_select
 bind backspace menu_back
@@ -765,6 +767,8 @@ bind mwheelup weapnext
 bind mwheeldown weapprev
 bind f +zoom
 bind tab +showscores
+bind F6 quicksave
+bind F9 quickload
 bind escape menu_main
 bind enter menu_select
 bind backspace menu_back
@@ -1192,6 +1196,8 @@ The generated UZDoom configs enable joystick input and bind common Steam Deck ga
 
 The generated UZDoom configs also default to fullscreen {STEAM_DECK_WIDTH}x{STEAM_DECK_HEIGHT}, vsync on, and a {STEAM_DECK_TARGET_FPS} FPS cap.
 
+For Steam Deck rear buttons, set Steam Input so L4 sends `F6` and R4 sends `F9`. DoomDeck binds `F6` to UZDoom quick save and `F9` to UZDoom quick load in both generated profiles.
+
 ## Classic Doom controls
 
 Recommended Steam Deck layout for the `Vanilla Doom` preset:
@@ -1203,6 +1209,8 @@ Recommended Steam Deck layout for the `Vanilla Doom` preset:
 - B: back in menus.
 - Left/right bumpers: weapon cycling.
 - Menu/Start: open menu.
+- L4: quick save, through a Steam Input `F6` mapping.
+- R4: quick load, through a Steam Input `F9` mapping.
 - Disable gyro and vertical mouse if you want a stricter classic feel.
 
 The generated `configs/uzdoom/classic/autoexec.cfg` sets `freelook false`, `sv_allowjump false`, and `sv_allowcrouch false`.
@@ -1221,9 +1229,11 @@ Recommended Steam Deck layout for the `UZDoom`, `Brutal Doom`, and `Project Brut
 - Y: jump.
 - Bumpers: weapon cycle.
 - Menu/Start: open menu.
+- L4: quick save, through a Steam Input `F6` mapping.
+- R4: quick load, through a Steam Input `F9` mapping.
 - Optional gyro: mouse as gyro, active on right-stick touch or left trigger.
 
-The generated `configs/uzdoom/modern/autoexec.cfg` enables freelook, jump, crouch, reload, and alt-fire bindings.
+The generated `configs/uzdoom/modern/autoexec.cfg` enables freelook, jump, crouch, reload, alt-fire, quick save, and quick load bindings.
 """
     live_options_primary = doomrunner_options_paths(dirs)[0]
     doomrunner_guide = f"""# Doom Runner Setup Guide

@@ -101,6 +101,18 @@ def test_validation_reports_non_object_json_configs_without_crashing(tmp_path: P
     assert f"Doom Runner generated options JSON must be an object: {live_options_path}" in messages
 
 
+def test_uzdoom_configs_bind_quicksave_and_quickload_keys(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+
+    write_uzdoom_configs(dirs, dry_run=False, logger=logger)
+
+    for profile in ["classic", "modern"]:
+        autoexec = (dirs.uzdoom_config / profile / "autoexec.cfg").read_text(encoding="utf-8").lower()
+        assert "bind f6 quicksave" in autoexec
+        assert "bind f9 quickload" in autoexec
+
+
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     logger = logging.getLogger("test")
