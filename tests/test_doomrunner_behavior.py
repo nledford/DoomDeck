@@ -89,5 +89,6 @@ def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> N
     assert options["selected_preset"] == "Brutal Doom"
     assert options["engines"]["default_engine"] == "doomdeck-uzdoom"
     assert options["IWADs"]["default_iwad"] == str(dirs.iwads / "DOOM2.WAD")
+    assert options["content_groups"] == manifest.get("content_groups", {})
     assert options["video_options"]["resolution_x"] == 1280
     assert options["video_options"]["resolution_y"] == 800

@@ -39,6 +39,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from doomdeck.application.content_groups import build_content_group_document
 from doomdeck.application.doomrunner import (
     build_doomrunner_options,
     doomrunner_options_paths,
@@ -984,9 +985,59 @@ fi
         atomic_write_text(launcher, content, dry_run, logger, mode=0o755)
 
     remove_stale_generated_launchers(dirs, written_launchers, dry_run, logger)
+    write_content_group_metadata(dirs, manifest, dry_run, logger)
     manifest_path = dirs.doomrunner_config / "preset-manifest.json"
     atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n", dry_run, logger)
     return manifest
+
+
+def read_existing_preset_manifest(dirs: Dirs) -> dict[str, Any]:
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    if not manifest_path.exists():
+        return {"presets": []}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"presets": []}
+    return manifest if isinstance(manifest, dict) else {"presets": []}
+
+
+def write_content_group_metadata(
+    dirs: Dirs,
+    manifest: dict[str, Any],
+    dry_run: bool,
+    logger: logging.Logger,
+) -> dict[str, object]:
+    document = build_content_group_document(dirs, manifest)
+    groups = document["content_groups"]
+    manifest["content_groups"] = groups
+    atomic_write_text(dirs.doomrunner_config / "content-groups.json", json.dumps(document, indent=2) + "\n", dry_run, logger)
+    return document
+
+
+def refresh_existing_doomrunner_content_groups(
+    dirs: Dirs,
+    groups: object,
+    dry_run: bool,
+    logger: logging.Logger,
+) -> None:
+    for options_path in doomrunner_options_paths(dirs):
+        if not options_path.exists():
+            continue
+        try:
+            options = json.loads(options_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Could not refresh Doom Runner content groups in invalid options JSON: %s", options_path)
+            continue
+        if not isinstance(options, dict):
+            logger.warning("Could not refresh Doom Runner content groups in non-object options JSON: %s", options_path)
+            continue
+        if options.get("content_groups") == groups:
+            logger.info("Doom Runner content groups already current: %s", options_path)
+            continue
+        backup_path(options_path, dirs.backups, dry_run, logger, label=f"doomrunner-content-groups-{options_path.parent.parent.name}.json")
+        options["content_groups"] = groups
+        atomic_write_text(options_path, json.dumps(options, indent=4) + "\n", dry_run, logger)
 
 
 def write_doomrunner_live_config(dirs: Dirs, manifest: dict[str, Any], args: argparse.Namespace, logger: logging.Logger) -> None:
@@ -1016,6 +1067,38 @@ def write_doomrunner_live_config(dirs: Dirs, manifest: dict[str, Any], args: arg
             label = f"doomrunner-options-{options_path.parent.parent.name}.json"
             backup_path(options_path, dirs.backups, args.dry_run, logger, label=label)
         atomic_write_text(options_path, content, args.dry_run, logger)
+
+
+def render_content_group_guide(manifest: dict[str, Any]) -> str:
+    content_groups = manifest.get("content_groups", {})
+    if not isinstance(content_groups, dict):
+        return ""
+    section_titles = {
+        "presets": "Preset Groups",
+        "map_packs": "Map Pack Groups",
+        "mods": "Mod Groups",
+    }
+    output = "\n## Automatic Content Groups\n\nDoomDeck writes group metadata separately from launchable items. Group headings are labels only; the entries listed under them remain the selectable presets, WADs, map packs, and mods.\n"
+    wrote_any = False
+    for section_key, title in section_titles.items():
+        groups = content_groups.get(section_key, [])
+        if not isinstance(groups, list) or not groups:
+            continue
+        wrote_any = True
+        output += f"\n### {title}\n"
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            output += f"\n#### {group.get('display_name', group.get('id', 'Group'))}\n"
+            items = group.get("items", [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                path = f" - `{item['path']}`" if item.get("path") else ""
+                output += f"- `{item.get('display_name', item.get('id', 'item'))}`{path}\n"
+    return output if wrote_any else ""
 
 
 def write_docs(
@@ -1135,6 +1218,7 @@ Doom Runner should open with the generated UZDoom engine, IWADs, and presets alr
     for preset in manifest.get("presets", []):
         files = ", ".join(preset.get("files") or []) or "none"
         doomrunner_guide += f"- `{preset['name']}`\n  - IWAD: `{preset['iwad']}`\n  - Config: `{preset['config']}`\n  - Autoexec: `{preset['autoexec']}`\n  - Files/mods: `{files}`\n"
+    doomrunner_guide += render_content_group_guide(manifest)
     doomrunner_guide += """
 ## Direct launchers
 
@@ -1384,7 +1468,7 @@ def install_wads(args: argparse.Namespace) -> int:
             "Download requested ModDB WAD archives into the PWAD map directory",
         ],
     )
-    for directory in [dirs.root, dirs.downloads, dirs.pwads, dirs.backups, dirs.logs]:
+    for directory in [dirs.root, dirs.configs, dirs.doomrunner_config, dirs.downloads, dirs.pwads, dirs.backups, dirs.logs]:
         ensure_dir(directory, args.dry_run, logger)
 
     moddb_wads = install_moddb_wad_urls(
@@ -1401,6 +1485,12 @@ def install_wads(args: argparse.Namespace) -> int:
         logger.info("Installed ModDB WAD payloads: %s", ", ".join(str(path) for path in moddb_wads))
     else:
         logger.info("No ModDB WAD payloads installed")
+    manifest = read_existing_preset_manifest(dirs)
+    document = write_content_group_metadata(dirs, manifest, args.dry_run, logger)
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    if manifest_path.exists():
+        atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n", args.dry_run, logger)
+    refresh_existing_doomrunner_content_groups(dirs, document["content_groups"], args.dry_run, logger)
     return 0
 
 

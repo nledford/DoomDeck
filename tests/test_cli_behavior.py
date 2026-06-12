@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 import tempfile
@@ -84,6 +85,8 @@ class CLIBehaviorTests(unittest.TestCase):
             self.assertTrue((root / "downloads").is_dir())
             self.assertTrue((root / "pwads").is_dir())
             self.assertTrue((root / "backups").is_dir())
+            content_groups = json.loads((root / "configs" / "doomrunner" / "content-groups.json").read_text(encoding="utf-8"))
+            self.assertEqual(content_groups["schema"], "doom-deck-setup/content-groups/v1")
 
     def test_parser_exposes_maintenance_commands(self) -> None:
         parser = build_arg_parser()
