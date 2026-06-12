@@ -10,15 +10,17 @@ authors = [
     { name = "Nathaniel Ledford", email = "nate@nateledford.com" },
 ]
 keywords = [
-    "appimage",
     "brutal-doom",
     "doom",
     "doom-runner",
     "game-modding",
     "linux-gaming",
+    "proton",
     "project-brutality",
     "steam-deck",
+    "steam-input",
     "uzdoom",
+    "windows-gaming",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
