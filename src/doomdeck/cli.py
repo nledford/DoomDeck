@@ -60,6 +60,7 @@ from doomdeck.application.managed_mods import (
     metadata_matches,
 )
 from doomdeck.application.moddb_wads import install_moddb_wad_urls
+from doomdeck.application.release_assets import select_linux_appimage_release_asset, select_windows_zip_release_asset
 from doomdeck.application.self_update import (
     DEFAULT_SELF_UPDATE_REF,
     DEFAULT_SELF_UPDATE_REPO_URL,
@@ -358,43 +359,9 @@ def select_release_asset(repo: str, prefer_legacy_appimage: bool, logger: loggin
         github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
         repo,
     )
-    tag_name = release.label
-    assets = release.assets
-    if not assets:
-        raise DoomDeckError(f"GitHub release {repo}@{tag_name} has no downloadable assets")
-
-    repo_key = repo.split("/")[-1].lower().replace("_", "").replace("-", "")
-
-    def score(asset: Any) -> int:
-        name = asset.name
-        lower = name.lower()
-        value = 0
-        if "appimage" in lower:
-            value += 100
-        if "linux" in lower:
-            value += 50
-        if any(token in lower for token in ["x86_64", "x64", "amd64"]):
-            value += 30
-        if repo_key in lower.replace("_", "").replace("-", ""):
-            value += 10
-        if "legacy" in lower:
-            value += 20 if prefer_legacy_appimage else -25
-        if any(token in lower for token in ["windows", "win64", ".exe", "mac", "dmg", "arm64", "aarch64"]):
-            value -= 100
-        return value
-
-    ranked = sorted(assets, key=score, reverse=True)
-    chosen = ranked[0]
-    if score(chosen) < 50:
-        names = ", ".join(a.name for a in assets)
-        raise DoomDeckError(f"Could not identify a suitable Linux AppImage for {repo}@{tag_name}. Assets: {names}")
-    logger.info("Selected GitHub asset for %s: %s", repo, chosen.name)
-    return GitHubAsset(
-        name=chosen.name,
-        url=chosen.browser_download_url,
-        size=chosen.size,
-        tag_name=str(tag_name),
-    )
+    selected = select_linux_appimage_release_asset(release, repo, prefer_legacy_appimage=prefer_legacy_appimage)
+    logger.info("Selected GitHub asset for %s: %s", repo, selected.name)
+    return selected
 
 
 def select_windows_release_asset(repo: str, logger: logging.Logger) -> GitHubAsset:
@@ -402,46 +369,9 @@ def select_windows_release_asset(repo: str, logger: logging.Logger) -> GitHubAss
         github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
         repo,
     )
-    tag_name = release.label
-    assets = release.assets
-    if not assets:
-        raise DoomDeckError(f"GitHub release {repo}@{tag_name} has no downloadable assets")
-
-    repo_key = repo.split("/")[-1].lower().replace("_", "").replace("-", "")
-
-    def score(asset: Any) -> int:
-        name = asset.name
-        lower = name.lower()
-        compact = lower.replace("_", "").replace("-", "")
-        value = 0
-        if lower.endswith(".zip"):
-            value += 100
-        if "windows" in lower or "win64" in lower:
-            value += 80
-        if any(token in lower for token in ["x86_64", "x64", "amd64"]):
-            value += 40
-        if "recent" in lower:
-            value += 15
-        if repo_key in compact:
-            value += 10
-        if any(token in lower for token in ["legacy", "i386", "i686", "x86-32"]):
-            value -= 80
-        if any(token in lower for token in ["linux", "appimage", "mac", "dmg", "arm64", "aarch64"]):
-            value -= 120
-        return value
-
-    ranked = sorted(assets, key=score, reverse=True)
-    chosen = ranked[0]
-    if score(chosen) < 120:
-        names = ", ".join(a.name for a in assets)
-        raise DoomDeckError(f"Could not identify a suitable Windows ZIP for {repo}@{tag_name}. Assets: {names}")
-    logger.info("Selected Windows GitHub asset for %s: %s", repo, chosen.name)
-    return GitHubAsset(
-        name=chosen.name,
-        url=chosen.browser_download_url,
-        size=chosen.size,
-        tag_name=str(tag_name),
-    )
+    selected = select_windows_zip_release_asset(release, repo)
+    logger.info("Selected Windows GitHub asset for %s: %s", repo, selected.name)
+    return selected
 
 
 def download_url(
