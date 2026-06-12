@@ -18,3 +18,16 @@ def test_generated_launchers_point_to_single_doomrunner_shortcut(tmp_path) -> No
     launcher = (dirs.launchers / "Vanilla_Doom.sh").read_text(encoding="utf-8")
     assert "Open the Steam shortcut 'Doom Runner'" in launcher
     assert "DoomDeck - Vanilla Doom" not in launcher
+
+
+def test_generated_manifest_omits_modded_presets_when_mod_files_are_missing(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.iwads.mkdir(parents=True)
+    (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
+
+    manifest = write_launchers_and_manifest(dirs, None, None, dry_run=False, logger=logging.getLogger("test"))
+
+    preset_names = [preset["name"] for preset in manifest["presets"]]
+    assert preset_names == ["Vanilla Doom", "UZDoom"]
+    assert not (dirs.launchers / "Brutal_Doom.sh").exists()
+    assert not (dirs.launchers / "Project_Brutality.sh").exists()

@@ -61,6 +61,10 @@ def test_preset_manifest_uses_managed_mod_identities(tmp_path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     dirs.iwads.mkdir(parents=True)
     (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
+    dirs.brutal.mkdir(parents=True)
+    dirs.project_brutality.mkdir(parents=True)
+    (dirs.brutal / "brutal-doom.pk3").write_bytes(b"brutal")
+    (dirs.project_brutality / "project-brutality.pk3").write_bytes(b"project-brutality")
 
     manifest = build_preset_manifest(dirs, None, None)
 

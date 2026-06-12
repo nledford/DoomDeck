@@ -20,10 +20,17 @@ def choose_default_preset_iwad(dirs: Dirs) -> Optional[Path]:
     return None
 
 
+def _existing_mod_path(explicit_path: Optional[Path], fallback_path: Path) -> Optional[Path]:
+    path = explicit_path or fallback_path
+    return path if path.exists() else None
+
+
 def build_preset_manifest_model(dirs: Dirs, brutal_path: Optional[Path], project_brutality_path: Optional[Path]) -> PresetManifest:
     presets: list[Preset] = []
     default_iwad = choose_default_preset_iwad(dirs)
     if default_iwad:
+        brutal_mod = _existing_mod_path(brutal_path, BRUTAL_DOOM_MOD.alias_path(dirs.brutal))
+        project_brutality_mod = _existing_mod_path(project_brutality_path, PROJECT_BRUTALITY_MOD.alias_path(dirs.project_brutality))
         presets.extend(
             [
                 Preset(
@@ -46,32 +53,38 @@ def build_preset_manifest_model(dirs: Dirs, brutal_path: Optional[Path], project
                     launcher=dirs.launchers / "UZDoom.sh",
                     notes="UZDoom without gameplay mods. Change the selected IWAD in Doom Runner to switch base games.",
                 ),
+            ]
+        )
+        if brutal_mod:
+            presets.append(
                 Preset(
                     name=BRUTAL_DOOM_MOD.name,
                     category=BRUTAL_DOOM_MOD.name,
                     engine="UZDoom",
                     iwad=default_iwad,
-                    files=(brutal_path or BRUTAL_DOOM_MOD.alias_path(dirs.brutal),),
+                    files=(brutal_mod,),
                     config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
                     autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
                     launcher=dirs.launchers / "Brutal_Doom.sh",
                     missing_hint="Rerun install to check ModDB, or use --brutal-doom-file/--brutal-doom-url.",
                     notes=f"Requires mods/brutal-doom/{BRUTAL_DOOM_MOD.alias}. Change the selected IWAD in Doom Runner to switch base games.",
-                ),
+                )
+            )
+        if project_brutality_mod:
+            presets.append(
                 Preset(
                     name=PROJECT_BRUTALITY_MOD.name,
                     category=PROJECT_BRUTALITY_MOD.name,
                     engine="UZDoom",
                     iwad=default_iwad,
-                    files=(project_brutality_path or PROJECT_BRUTALITY_MOD.alias_path(dirs.project_brutality),),
+                    files=(project_brutality_mod,),
                     config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
                     autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
                     launcher=dirs.launchers / "Project_Brutality.sh",
                     missing_hint="Rerun install to download Project Brutality, or use --project-brutality-file /path/to/Project_Brutality.pk3.",
                     notes="Downloads Project Brutality from GitHub and installs it as mods/project-brutality/project-brutality.pk3.",
-                ),
-            ]
-        )
+                )
+            )
     manifest = PresetManifest(
         generated_at=_dt.datetime.now().isoformat(timespec="seconds"),
         root=dirs.root,

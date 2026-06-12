@@ -98,6 +98,10 @@ def _manifest_presets(manifest: ManifestInput) -> tuple[PresetInput, ...]:
     return tuple(cast(Mapping[str, object], preset) for preset in presets if isinstance(preset, Mapping))
 
 
+def _preset_mod_files_exist(preset: PresetInput) -> bool:
+    return all(path.exists() for path in _preset_files(preset))
+
+
 def _manifest_content_groups(manifest: ManifestInput) -> object:
     if isinstance(manifest, PresetManifest):
         return manifest.content_groups or {}
@@ -153,7 +157,7 @@ def choose_doomrunner_selected_preset(presets: list[dict[str, Any]]) -> str:
 
 def build_doomrunner_options(dirs: Dirs, manifest: ManifestInput) -> dict[str, Any]:
     iwad_entries = build_doomrunner_iwad_entries(dirs)
-    presets = [build_doomrunner_preset(dirs, preset) for preset in _manifest_presets(manifest)]
+    presets = [build_doomrunner_preset(dirs, preset) for preset in _manifest_presets(manifest) if _preset_mod_files_exist(preset)]
     return {
         "version": DOOMRUNNER_OPTIONS_VERSION,
         "engines": {

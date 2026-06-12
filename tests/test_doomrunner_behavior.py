@@ -90,7 +90,9 @@ def test_doomrunner_preset_keeps_raw_wad_paths_for_launching(tmp_path) -> None:
 def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     dirs.iwads.mkdir(parents=True)
+    dirs.brutal.mkdir(parents=True)
     (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    (dirs.brutal / "brutal-doom.pk3").write_text("", encoding="utf-8")
     manifest = {
         "presets": [
             {
@@ -122,10 +124,42 @@ def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> N
     assert options["video_options"]["resolution_y"] == 800
 
 
-def test_doomrunner_options_accept_typed_manifest(tmp_path) -> None:
+def test_doomrunner_options_omit_modded_presets_without_installed_mod_files(tmp_path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     dirs.iwads.mkdir(parents=True)
     (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    manifest = {
+        "presets": [
+            {
+                "name": "Vanilla Doom",
+                "iwad": str(dirs.iwads / "DOOM2.WAD"),
+                "files": [],
+                "config": str(dirs.uzdoom_config / "classic" / "uzdoom.ini"),
+                "autoexec": str(dirs.uzdoom_config / "classic" / "autoexec.cfg"),
+            },
+            {
+                "name": "Brutal Doom",
+                "iwad": str(dirs.iwads / "DOOM2.WAD"),
+                "files": [str(dirs.brutal / "brutal-doom.pk3")],
+                "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
+                "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
+            },
+        ]
+    }
+
+    options = build_doomrunner_options(dirs, manifest)
+
+    preset_names = [preset["name"] for preset in options["presets"]]
+    assert preset_names == ["Vanilla Doom"]
+    assert options["selected_preset"] == "Vanilla Doom"
+
+
+def test_doomrunner_options_accept_typed_manifest(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.iwads.mkdir(parents=True)
+    dirs.brutal.mkdir(parents=True)
+    (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    (dirs.brutal / "brutal-doom.pk3").write_text("", encoding="utf-8")
     manifest = PresetManifest(
         generated_at="2026-06-12T12:00:00",
         root=dirs.root,

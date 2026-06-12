@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import zipfile
 from pathlib import Path
@@ -186,6 +187,61 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     assert any("Preset manifest includes Project Brutality preset" in item.message for item in report)
     assert any("Doom Runner generated config has launchable presets" in item.message for item in report)
     assert any("Project Brutality archive has expected UZDoom root files" in item.message for item in report)
+
+
+def test_validation_fails_generated_preset_that_references_missing_mod_file(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+    args = argparse.Namespace(dry_run=False, skip_doomrunner_live_config=False)
+
+    for directory in all_managed_dirs(dirs):
+        directory.mkdir(parents=True, exist_ok=True)
+    (dirs.doomrunner / "DoomRunner.exe").write_bytes(b"exe")
+    (dirs.uzdoom / "uzdoom.exe").write_bytes(b"exe")
+    (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
+    write_uzdoom_configs(dirs, dry_run=False, logger=logger)
+    manifest = {
+        "schema": "doom-deck-setup/preset-manifest/v1",
+        "generated_at": "2026-06-12T12:00:00",
+        "warning": "Generated",
+        "root": str(dirs.root),
+        "engine": {
+            "name": "UZDoom",
+            "executable": str(dirs.uzdoom / "uzdoom.exe"),
+            "family": "UZDoom/ZDoom",
+            "config_directory": str(dirs.uzdoom_config),
+            "data_directory": str(dirs.root),
+        },
+        "iwad_directory": str(dirs.iwads),
+        "pwad_directory": str(dirs.pwads),
+        "mod_directories": {"brutal_doom": str(dirs.brutal)},
+        "presets": [
+            {
+                "name": "Brutal Doom",
+                "category": "Brutal Doom",
+                "engine": "UZDoom",
+                "iwad": str(dirs.iwads / "DOOM2.WAD"),
+                "files": [str(dirs.brutal / "brutal-doom.pk3")],
+                "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
+                "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
+                "launcher": str(dirs.launchers / "Brutal_Doom.sh"),
+            }
+        ],
+    }
+    (dirs.doomrunner_config / "preset-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    write_doomrunner_live_config(
+        dirs,
+        manifest,
+        DoomRunnerLiveConfigSettings(dry_run=False),
+        logger,
+        process_detector=lambda _patterns: False,
+    )
+
+    report = validate_internal(args, dirs, SteamInfo(None, None, None, [], None), logger)
+
+    failures = [item.message for item in report if item.level == "FAIL"]
+    assert any(f"Preset Brutal Doom mod file reference: {dirs.brutal / 'brutal-doom.pk3'}" == failure for failure in failures)
+    assert any("Doom Runner generated config resolves UZDoom launch paths for presets" in failure for failure in failures)
 
 
 def test_validation_reports_extra_doomdeck_steam_shortcuts(tmp_path: Path) -> None:

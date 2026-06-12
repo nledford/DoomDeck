@@ -209,6 +209,8 @@ def test_preset_manifest_keeps_existing_presets_and_adds_separate_groups(tmp_pat
     dirs = build_dirs(tmp_path / "Doom")
     dirs.iwads.mkdir(parents=True)
     (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
+    dirs.brutal.mkdir(parents=True)
+    (dirs.brutal / "brutal-doom.pk3").write_bytes(b"brutal")
 
     manifest = build_preset_manifest(dirs, None, None)
 

@@ -181,8 +181,14 @@ class InstallationValidator:
 
     def _validate_preset_references(self, items: list[ValidationItem], manifest: PresetManifest, dirs: Dirs) -> None:
         manifest_path = dirs.doomrunner_config / "preset-manifest.json"
-        project_brutality_preset_ok = any(preset.name == "Project Brutality" for preset in manifest.presets)
-        add_validation_item(items, "PASS" if project_brutality_preset_ok else "FAIL", f"Preset manifest includes Project Brutality preset: {manifest_path}")
+        self._validate_optional_mod_preset(items, manifest, manifest_path, "Brutal Doom", dirs.brutal / BRUTAL_DOOM_ALIAS)
+        self._validate_optional_mod_preset(
+            items,
+            manifest,
+            manifest_path,
+            "Project Brutality",
+            dirs.project_brutality / PROJECT_BRUTALITY_ALIAS,
+        )
         for preset in manifest.presets:
             for key, path in [
                 ("iwad", preset.iwad),
@@ -192,8 +198,24 @@ class InstallationValidator:
             ]:
                 add_validation_item(items, "PASS" if path.exists() else "FAIL", f"Preset {preset.name} references existing {key}: {path}")
             for p in preset.files:
-                level = "PASS" if p.exists() else "WARN"
+                level = "PASS" if p.exists() else "FAIL"
                 add_validation_item(items, level, f"Preset {preset.name} mod file reference: {p}")
+
+    def _validate_optional_mod_preset(
+        self,
+        items: list[ValidationItem],
+        manifest: PresetManifest,
+        manifest_path: Path,
+        preset_name: str,
+        mod_alias: Path,
+    ) -> None:
+        has_preset = any(preset.name == preset_name for preset in manifest.presets)
+        if mod_alias.exists():
+            add_validation_item(items, "PASS" if has_preset else "FAIL", f"Preset manifest includes {preset_name} preset: {manifest_path}")
+        elif has_preset:
+            add_validation_item(items, "FAIL", f"Preset manifest includes {preset_name} preset but mod alias is missing: {mod_alias}")
+        else:
+            add_validation_item(items, "WARN", f"Optional {preset_name} preset omitted because mod alias is missing: {mod_alias}")
 
     def _validate_uzdoom_configs(self, items: list[ValidationItem], dirs: Dirs) -> None:
         for profile, back_binding in [("classic", "bind pad_b menu_back"), ("modern", "bind pad_b +deck_crouch_back")]:
