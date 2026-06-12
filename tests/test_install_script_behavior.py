@@ -4,11 +4,13 @@ import os
 import subprocess
 import sys
 import tarfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TEST_DEP_NAME = "doomdecktestdep"
 
 
 def add_text_member(archive: tarfile.TarFile, name: str, content: str) -> None:
@@ -18,11 +20,32 @@ def add_text_member(archive: tarfile.TarFile, name: str, content: str) -> None:
     archive.addfile(member, fileobj=BytesIO(data))
 
 
-def make_minimal_source_archive(path: Path, *, include_symlink: bool = False) -> None:
+def make_test_dependency_wheel(path: Path) -> None:
+    metadata_dir = f"{TEST_DEP_NAME}-0.1.dist-info"
+    with zipfile.ZipFile(path, "w") as wheel:
+        wheel.writestr(f"{TEST_DEP_NAME}/__init__.py", "VALUE = 'installed dependency'\n")
+        wheel.writestr(
+            f"{metadata_dir}/METADATA",
+            f"Metadata-Version: 2.1\nName: {TEST_DEP_NAME}\nVersion: 0.1\n",
+        )
+        wheel.writestr(
+            f"{metadata_dir}/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: DoomDeck tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        wheel.writestr(f"{metadata_dir}/RECORD", "")
+
+
+def make_minimal_source_archive(path: Path, *, include_symlink: bool = False, dependency_wheel: Path | None = None) -> None:
+    dependencies = f'dependencies = ["{TEST_DEP_NAME} @ {dependency_wheel.as_uri()}"]\n' if dependency_wheel else ""
+    main_module = (
+        f"import {TEST_DEP_NAME}\nprint('usage: doomdeck')\nraise SystemExit(0)\n"
+        if dependency_wheel
+        else "print('usage: doomdeck')\nraise SystemExit(0)\n"
+    )
     with tarfile.open(path, "w:gz") as archive:
-        add_text_member(archive, "DoomDeck-main/pyproject.toml", "[project]\nname = 'doomdeck'\n")
+        add_text_member(archive, "DoomDeck-main/pyproject.toml", f"[project]\nname = 'doomdeck'\n{dependencies}")
         add_text_member(archive, "DoomDeck-main/src/doomdeck/__init__.py", "")
-        add_text_member(archive, "DoomDeck-main/src/doomdeck/__main__.py", "raise SystemExit(0)\n")
+        add_text_member(archive, "DoomDeck-main/src/doomdeck/__main__.py", main_module)
         if include_symlink:
             member = tarfile.TarInfo("DoomDeck-main/unsafe-link")
             member.type = tarfile.SYMTYPE
@@ -74,17 +97,22 @@ def test_install_script_rejects_source_archives_with_links(tmp_path: Path) -> No
 
 
 def test_install_script_installs_cli_with_self_update_command(tmp_path: Path) -> None:
+    dependency_wheel = tmp_path / f"{TEST_DEP_NAME}-0.1-py3-none-any.whl"
+    make_test_dependency_wheel(dependency_wheel)
     archive_path = tmp_path / "doomdeck.tar.gz"
-    make_repo_source_archive(archive_path)
+    make_minimal_source_archive(archive_path, dependency_wheel=dependency_wheel)
 
     result = run_installer(archive_path, tmp_path)
 
     assert result.returncode == 0, result.stderr
     installed_command = tmp_path / "bin" / "doomdeck"
     assert installed_command.exists()
+    installed_source = tmp_path / "install" / "source"
+    assert (installed_source / ".venv" / "bin" / "python").exists()
+    assert ".venv/bin/python" in installed_command.read_text(encoding="utf-8")
 
     help_result = subprocess.run(
-        [str(installed_command), "self-update", "--help"],
+        [str(installed_command), "--help"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

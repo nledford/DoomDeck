@@ -1,7 +1,11 @@
 """Self-update helpers for source-archive DoomDeck installs."""
 from __future__ import annotations
 
+import ast
+import logging
+import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +80,87 @@ def validate_self_update_source_dir(install_dir: Path) -> None:
         raise DoomDeckError(f"DoomDeck source install is missing pyproject.toml: {install_dir}")
     if not (install_dir / "src" / "doomdeck").is_dir():
         raise DoomDeckError(f"DoomDeck source install is missing src/doomdeck: {install_dir}")
+
+
+def read_project_dependencies(pyproject_path: Path) -> list[str]:
+    in_project = False
+    collecting_dependencies = False
+    dependency_lines: list[str] = []
+    bracket_depth = 0
+
+    for raw_line in pyproject_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            if collecting_dependencies:
+                break
+            in_project = line == "[project]"
+            continue
+        if not in_project:
+            continue
+        if collecting_dependencies:
+            dependency_lines.append(line)
+            bracket_depth += line.count("[") - line.count("]")
+            if bracket_depth <= 0:
+                break
+            continue
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "dependencies":
+            dependency_lines.append(value.strip())
+            bracket_depth += value.count("[") - value.count("]")
+            if bracket_depth <= 0:
+                break
+            collecting_dependencies = True
+
+    if not dependency_lines:
+        return []
+    try:
+        dependencies = ast.literal_eval("\n".join(dependency_lines))
+    except (SyntaxError, ValueError) as exc:
+        raise DoomDeckError(f"Could not read project dependencies from {pyproject_path}") from exc
+    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
+        raise DoomDeckError(f"Project dependencies must be a list of strings in {pyproject_path}")
+    return dependencies
+
+
+def runtime_venv_python(source_dir: Path) -> Path:
+    if os.name == "nt":
+        return source_dir / ".venv" / "Scripts" / "python.exe"
+    return source_dir / ".venv" / "bin" / "python"
+
+
+def _run_runtime_command(cmd: list[str], error_message: str) -> None:
+    result = subprocess.run(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise DoomDeckError(f"{error_message} ({result.returncode}).\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+
+
+def prepare_self_update_runtime(source_dir: Path, python_executable: Path, logger: logging.Logger) -> Path:
+    venv_dir = source_dir / ".venv"
+    logger.debug("Create DoomDeck runtime venv: %s", venv_dir)
+    _run_runtime_command(
+        [str(python_executable), "-m", "venv", str(venv_dir)],
+        "Failed to create DoomDeck Python environment",
+    )
+    venv_python = runtime_venv_python(source_dir)
+    if not venv_python.is_file():
+        raise DoomDeckError(f"DoomDeck Python environment is missing its interpreter: {venv_python}")
+
+    dependencies = read_project_dependencies(source_dir / "pyproject.toml")
+    if dependencies:
+        logger.debug("Install DoomDeck runtime dependencies into %s: %s", venv_dir, ", ".join(dependencies))
+        _run_runtime_command(
+            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", *dependencies],
+            "Failed to install DoomDeck Python dependencies",
+        )
+    return venv_python
 
 
 def find_extracted_self_update_source_dir(extract_dir: Path) -> Path:

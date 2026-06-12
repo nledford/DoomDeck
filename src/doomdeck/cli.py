@@ -67,6 +67,7 @@ from doomdeck.application.self_update import (
     build_self_update_plan,
     find_extracted_self_update_source_dir,
     infer_source_install_dir,
+    prepare_self_update_runtime,
     replace_self_update_install_dir,
     validate_self_update_source_dir,
 )
@@ -1089,11 +1090,15 @@ def self_update_archive_allowed_hosts(archive_url: str, explicit_archive_url: Op
     return {hostname} if hostname else None
 
 
-def smoke_test_self_update_source(source_dir: Path, logger: logging.Logger) -> None:
+def smoke_test_self_update_source(
+    source_dir: Path,
+    logger: logging.Logger,
+    python_executable: Path | None = None,
+) -> None:
     env = os.environ.copy()
     src_path = str(source_dir / "src")
     env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_path
-    cmd = [sys.executable, "-m", "doomdeck", "--help"]
+    cmd = [str(python_executable or sys.executable), "-m", "doomdeck", "--help"]
     logger.debug("Run self-update smoke test: %s", " ".join(cmd))
     result = subprocess.run(
         cmd,
@@ -1152,7 +1157,8 @@ def self_update(args: argparse.Namespace) -> int:
             safe_extract_tar(archive, extract_dir)
         source_dir = find_extracted_self_update_source_dir(extract_dir)
         shutil.copytree(source_dir, staged_install_dir)
-        smoke_test_self_update_source(staged_install_dir, logger)
+        venv_python = prepare_self_update_runtime(staged_install_dir, Path(sys.executable), logger)
+        smoke_test_self_update_source(staged_install_dir, logger, venv_python)
         replace_self_update_install_dir(staged_install_dir, install_dir)
 
     logger.info("Updated DoomDeck source install at %s", install_dir)

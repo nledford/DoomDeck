@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Install DoomDeck from a GitHub source archive without requiring PyPI.
+# Install DoomDeck from a GitHub source archive.
 #
 # Typical use:
 #   curl -LsSf https://raw.githubusercontent.com/nledford/DoomDeck/master/install.sh | sh
@@ -69,6 +69,7 @@ extract_dir="$tmp_root/extract"
 tmp_install="$tmp_root/source"
 launcher="$bin_dir/$command_name"
 previous_install="$install_dir.previous"
+requirements_path="$tmp_root/requirements.txt"
 
 info "Downloading $archive_url"
 download_archive "$archive_path" || fail "failed to download DoomDeck source archive"
@@ -140,7 +141,84 @@ source_dir=$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
     tar -xf -
 )
 
-PYTHONPATH="$tmp_install/src" "$python_path" -m doomdeck --help >/dev/null ||
+venv_dir="$tmp_install/.venv"
+"$python_path" -m venv "$venv_dir" || fail "failed to create DoomDeck Python environment"
+venv_python="$venv_dir/bin/python"
+[ -x "$venv_python" ] || fail "DoomDeck Python environment is missing its interpreter: $venv_python"
+
+"$python_path" - "$tmp_install/pyproject.toml" >"$requirements_path" <<'PY' ||
+import ast
+import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+pyproject_path = Path(sys.argv[1])
+
+
+def fallback_dependencies(path):
+    in_project = False
+    collecting_dependencies = False
+    dependency_lines = []
+    bracket_depth = 0
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            if collecting_dependencies:
+                break
+            in_project = line == "[project]"
+            continue
+        if not in_project:
+            continue
+        if collecting_dependencies:
+            dependency_lines.append(line)
+            bracket_depth += line.count("[") - line.count("]")
+            if bracket_depth <= 0:
+                break
+            continue
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "dependencies":
+            dependency_lines.append(value.strip())
+            bracket_depth += value.count("[") - value.count("]")
+            if bracket_depth <= 0:
+                break
+            collecting_dependencies = True
+
+    if not dependency_lines:
+        return []
+    dependencies = ast.literal_eval("\n".join(dependency_lines))
+    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
+        raise ValueError("project.dependencies must be a list of strings")
+    return dependencies
+
+
+if tomllib is None:
+    dependencies = fallback_dependencies(pyproject_path)
+else:
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    dependencies = data.get("project", {}).get("dependencies", [])
+    if dependencies is None:
+        dependencies = []
+    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
+        raise ValueError("project.dependencies must be a list of strings")
+
+for dependency in dependencies:
+    print(dependency)
+PY
+    fail "failed to read DoomDeck runtime dependencies"
+
+if [ -s "$requirements_path" ]; then
+    "$venv_python" -m pip install --disable-pip-version-check -r "$requirements_path" ||
+        fail "failed to install DoomDeck Python dependencies"
+fi
+
+PYTHONPATH="$tmp_install/src" "$venv_python" -m doomdeck --help >/dev/null ||
     fail "downloaded DoomDeck source failed its import smoke test"
 
 mkdir -p "$(dirname "$install_dir")" "$bin_dir"
@@ -160,18 +238,22 @@ if ! mv "$tmp_install" "$install_dir"; then
     fail "failed to install DoomDeck into $install_dir"
 fi
 
-"$python_path" - "$launcher" "$install_dir" "$python_path" <<'PY'
+"$python_path" - "$launcher" "$install_dir" <<'PY'
 import os
 import sys
 from pathlib import Path
 
-launcher, install_dir, python_path = sys.argv[1:]
+launcher, install_dir = sys.argv[1:]
 content = f"""#!/usr/bin/env sh
 set -eu
 DOOMDECK_INSTALL_DIR={install_dir!r}
-PYTHON={python_path!r}
+DOOMDECK_PYTHON="$DOOMDECK_INSTALL_DIR/.venv/bin/python"
+if [ ! -x "$DOOMDECK_PYTHON" ]; then
+    printf '%s\\n' "doomdeck: error: missing DoomDeck Python environment: $DOOMDECK_PYTHON" >&2
+    exit 1
+fi
 export PYTHONPATH="$DOOMDECK_INSTALL_DIR/src${{PYTHONPATH:+:$PYTHONPATH}}"
-exec "$PYTHON" -m doomdeck "$@"
+exec "$DOOMDECK_PYTHON" -m doomdeck "$@"
 """
 Path(launcher).write_text(content, encoding="utf-8")
 os.chmod(launcher, 0o755)
