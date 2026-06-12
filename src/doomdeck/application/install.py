@@ -49,7 +49,7 @@ def build_install_plan(
         actions.append(
             InstallAction(
                 "steam-shortcut",
-                f"Add/update Steam non-Steam shortcuts for Windows Doom Runner and UZDoom presets at {_shortcuts_label(steam.shortcuts_vdf)}",
+                f"Add/update the single Steam non-Steam shortcut for Windows Doom Runner at {_shortcuts_label(steam.shortcuts_vdf)}",
             )
         )
     return InstallPlan(tuple(actions))

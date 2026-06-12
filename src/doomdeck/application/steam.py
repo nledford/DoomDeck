@@ -6,18 +6,21 @@ import logging
 import shutil
 import subprocess
 import time
+from collections import OrderedDict
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, cast
 
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo
-from doomdeck.infrastructure.binary_vdf import BinaryVDF
+from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BKVValue, BinaryVDF
 from doomdeck.infrastructure.files import atomic_write_bytes, atomic_write_text, backup_path
 from doomdeck.infrastructure.processes import is_process_running
 from doomdeck.infrastructure.steam_compat import compat_mapping_key, dumps_text_vdf, load_text_vdf, set_compat_tool_mapping
-from doomdeck.infrastructure.steam_shortcuts import load_shortcuts, upsert_shortcut
+from doomdeck.infrastructure.steam_shortcuts import get_bkv_str, load_shortcuts, shortcut_entries, upsert_shortcut
 
 ProcessDetector = Callable[[list[str]], bool]
 SteamShutdown = Callable[[logging.Logger, bool], None]
+DOOMRUNNER_SHORTCUT_NAME = "Doom Runner"
+DOOMDECK_PRESET_SHORTCUT_PREFIX = "DoomDeck - "
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,6 +63,29 @@ def shutdown_steam(logger: logging.Logger, dry_run: bool) -> None:
     logger.warning("Steam command not found; close Steam manually before modifying Steam shortcut and compatibility files")
 
 
+def add_or_update_doomrunner_shortcut(
+    shortcuts_path: Path,
+    dirs: Dirs,
+    settings: SteamShortcutSettings,
+    logger: logging.Logger,
+    *,
+    process_detector: ProcessDetector = is_process_running,
+    steam_shutdown: SteamShutdown = shutdown_steam,
+) -> int:
+    return add_or_update_steam_shortcut(
+        shortcuts_path,
+        DOOMRUNNER_SHORTCUT_NAME,
+        dirs.doomrunner / "DoomRunner.exe",
+        dirs.doomrunner,
+        dirs,
+        settings,
+        logger,
+        process_detector=process_detector,
+        steam_shutdown=steam_shutdown,
+        remove_extra_doomdeck_shortcuts=True,
+    )
+
+
 def add_or_update_steam_shortcut(
     shortcuts_path: Path,
     appname: str,
@@ -71,6 +97,7 @@ def add_or_update_steam_shortcut(
     launch_options: str = "",
     match_exe: bool = True,
     *,
+    remove_extra_doomdeck_shortcuts: bool = False,
     process_detector: ProcessDetector = is_process_running,
     steam_shutdown: SteamShutdown = shutdown_steam,
 ) -> int:
@@ -94,10 +121,28 @@ def add_or_update_steam_shortcut(
         logger.info("Add Steam shortcut %s at index %s in %s", appname, result.key, shortcuts_path)
     else:
         logger.info("Update existing Steam shortcut %s in %s", appname, shortcuts_path)
+    if remove_extra_doomdeck_shortcuts:
+        removed = _remove_extra_doomdeck_shortcuts(root, keep_key=result.key)
+        if removed:
+            logger.info("Remove extra DoomDeck-managed Steam shortcuts: %s", ", ".join(removed))
     atomic_write_bytes(shortcuts_path, BinaryVDF.dumps(root), settings.dry_run, logger)
     if settings.proton_compat_tool:
         add_or_update_steam_compat_mapping(shortcuts_path.parent / "localconfig.vdf", result.appid, settings.proton_compat_tool, dirs, settings, logger)
     return result.appid
+
+
+def _remove_extra_doomdeck_shortcuts(root: OrderedDict[str, BKVValue], *, keep_key: str) -> tuple[str, ...]:
+    shortcuts = shortcut_entries(root)
+    removed: list[str] = []
+    for key, value in list(shortcuts.items()):
+        if key == keep_key or value.type_code != BKV_OBJECT:
+            continue
+        entry = cast(OrderedDict[str, BKVValue], value.value)
+        appname = get_bkv_str(entry, "appname", "AppName")
+        if appname == DOOMRUNNER_SHORTCUT_NAME or appname.startswith(DOOMDECK_PRESET_SHORTCUT_PREFIX):
+            del shortcuts[key]
+            removed.append(appname or key)
+    return tuple(removed)
 
 
 def add_or_update_steam_compat_mapping(

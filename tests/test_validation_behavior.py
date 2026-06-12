@@ -19,6 +19,8 @@ from doomdeck.application.validation import (
 from doomdeck.cli import validate_internal
 from doomdeck.domain.models import SteamInfo
 from doomdeck.domain.paths import all_managed_dirs, build_dirs
+from doomdeck.infrastructure.binary_vdf import BinaryVDF
+from doomdeck.infrastructure.steam_shortcuts import empty_shortcuts_root, make_shortcut_entry, shortcut_entries
 
 
 def make_executable(path: Path) -> None:
@@ -182,3 +184,30 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     assert any("Preset manifest includes Project Brutality preset" in item.message for item in report)
     assert any("Doom Runner generated config has launchable presets" in item.message for item in report)
     assert any("Project Brutality archive has expected UZDoom root files" in item.message for item in report)
+
+
+def test_validation_reports_extra_doomdeck_steam_shortcuts(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    shortcuts_path = tmp_path / "Steam" / "userdata" / "123" / "config" / "shortcuts.vdf"
+    shortcuts_path.parent.mkdir(parents=True)
+    root = empty_shortcuts_root()
+    shortcuts = shortcut_entries(root)
+    shortcuts["0"] = make_shortcut_entry("Doom Runner", dirs.doomrunner / "DoomRunner.exe", dirs.doomrunner, tags=["Doom"])
+    shortcuts["1"] = make_shortcut_entry(
+        "DoomDeck - Project Brutality",
+        dirs.uzdoom / "uzdoom.exe",
+        dirs.uzdoom,
+        tags=["Doom"],
+        launch_options="-iwad DOOM2.WAD",
+    )
+    shortcuts_path.write_bytes(BinaryVDF.dumps(root))
+    validator = InstallationValidator(
+        steamos_detector=lambda: (True, "SteamOS test fixture"),
+        shell_syntax_checker=lambda _path: True,
+    )
+
+    report = validator.validate(dirs, SteamInfo(tmp_path / "Steam", "123", shortcuts_path, [], None))
+
+    messages = {item.message: item.level for item in report}
+    assert messages["Exactly one Steam shortcut exists for Windows Doom Runner with expected executable path"] == "PASS"
+    assert messages["No extra DoomDeck preset Steam shortcuts remain: DoomDeck - Project Brutality"] == "FAIL"

@@ -9,7 +9,6 @@ from typing import Any, Optional
 from doomdeck.application.content_groups import build_content_group_document
 from doomdeck.application.doomrunner import doomrunner_options_paths
 from doomdeck.application.presets import build_preset_manifest
-from doomdeck.application.proton import build_uzdoom_launch_options
 from doomdeck.domain.models import Dirs
 from doomdeck.infrastructure.files import atomic_write_text, backup_path
 
@@ -66,9 +65,6 @@ def write_launchers_and_manifest(
         launcher = Path(preset["launcher"])
         written_launchers.add(launcher)
         files = [Path(p) for p in preset.get("files", [])]
-        shortcut_name = f"DoomDeck - {preset['name']}"
-        preset["steam_shortcut_name"] = shortcut_name
-        preset["launch_options"] = build_uzdoom_launch_options(preset)
         missing_guard = ""
         if files:
             missing_hint = str(preset.get("missing_hint", "Install the required mod file, then rerun this launcher."))
@@ -80,12 +76,11 @@ def write_launchers_and_manifest(
         content = f"""#!/usr/bin/env bash
 set -euo pipefail
 DOOMDECK_WINDOWS_PROTON_PRESET={shell_quote(str(preset["name"]))}
-STEAM_SHORTCUT={shell_quote(shortcut_name)}
 if [[ ! -f {shell_quote(str(Path(preset["iwad"])))} ]]; then
   echo "Missing IWAD: {preset["iwad"]}" >&2
   exit 1
 fi
-{missing_guard}echo "Launch $DOOMDECK_WINDOWS_PROTON_PRESET from the Steam shortcut '$STEAM_SHORTCUT' so Windows UZDoom runs through Proton with Steam Input." >&2
+{missing_guard}echo "Open the Steam shortcut 'Doom Runner' and select preset '$DOOMDECK_WINDOWS_PROTON_PRESET'." >&2
 exit 2
 """
         atomic_write_text(launcher, content, dry_run, logger, mode=0o755)

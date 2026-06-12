@@ -24,7 +24,7 @@ def test_install_actions_include_optional_steam_shortcut_step(tmp_path) -> None:
     )
 
     assert f"Create/update managed layout under {dirs.root}" in actions
-    assert f"Add/update Steam non-Steam shortcuts for Windows Doom Runner and UZDoom presets at {steam.shortcuts_vdf}" in actions
+    assert f"Add/update the single Steam non-Steam shortcut for Windows Doom Runner at {steam.shortcuts_vdf}" in actions
 
 
 def test_install_plan_preserves_rendered_action_contract(tmp_path) -> None:

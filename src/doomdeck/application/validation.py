@@ -277,7 +277,6 @@ class InstallationValidator:
 
     def _validate_steam(self, items: list[ValidationItem], dirs: Dirs, steam: SteamInfo) -> None:
         doomrunner_exe = dirs.doomrunner / "DoomRunner.exe"
-        uzdoom_exe = dirs.uzdoom / "uzdoom.exe"
         if steam.steam_root:
             add_validation_item(items, "PASS", f"Steam root detected: {steam.steam_root}")
         else:
@@ -291,39 +290,43 @@ class InstallationValidator:
             try:
                 root = load_shortcuts(steam.shortcuts_vdf)
                 shortcuts_obj = shortcut_entries(root)
-                found = False
-                for value in shortcuts_obj.values():
-                    if value.type_code == BKV_OBJECT and get_bkv_str(value.value, "appname", "AppName") == "Doom Runner":
-                        found = True
-                        exe = get_bkv_str(value.value, "exe", "Exe")
-                        if str(doomrunner_exe) in exe:
-                            add_validation_item(items, "PASS", "Steam shortcut exists for Windows Doom Runner with expected executable path")
-                        else:
-                            add_validation_item(items, "WARN", f"Steam shortcut named Doom Runner exists but exe differs: {exe}")
-                        break
-                if not found:
-                    add_validation_item(items, "WARN", f"No Doom Runner shortcut found in {steam.shortcuts_vdf}")
-                preset_shortcut = False
-                doomdeck_appids: list[int] = []
+                doomrunner_shortcuts: list[tuple[int | None, str]] = []
+                extra_preset_shortcuts: list[str] = []
                 for value in shortcuts_obj.values():
                     if value.type_code != BKV_OBJECT:
                         continue
-                    exe = get_bkv_str(value.value, "exe", "Exe")
                     appname = get_bkv_str(value.value, "appname", "AppName")
-                    launch_options = get_bkv_str(value.value, "LaunchOptions")
-                    appid_value = value.value.get("appid")
-                    if appid_value is not None:
-                        doomrunner_match = appname == "Doom Runner" and str(doomrunner_exe) in exe
-                        preset_match = appname.startswith("DoomDeck - ") and str(uzdoom_exe) in exe
-                        if doomrunner_match or preset_match:
-                            doomdeck_appids.append(int(appid_value.value))
-                    if str(uzdoom_exe) in exe and appname.startswith("DoomDeck - ") and "-iwad" in launch_options:
-                        preset_shortcut = True
-                        break
+                    if appname == "Doom Runner":
+                        exe = get_bkv_str(value.value, "exe", "Exe")
+                        appid_value = value.value.get("appid")
+                        appid = int(appid_value.value) if appid_value is not None else None
+                        doomrunner_shortcuts.append((appid, exe))
+                    elif appname.startswith("DoomDeck - "):
+                        extra_preset_shortcuts.append(appname)
+                expected_doomrunner_shortcuts = [
+                    (appid, exe) for appid, exe in doomrunner_shortcuts if str(doomrunner_exe) in exe
+                ]
+                if len(doomrunner_shortcuts) == 1 and expected_doomrunner_shortcuts:
+                    add_validation_item(items, "PASS", "Exactly one Steam shortcut exists for Windows Doom Runner with expected executable path")
+                elif not doomrunner_shortcuts:
+                    add_validation_item(items, "WARN", f"No Doom Runner shortcut found in {steam.shortcuts_vdf}")
+                elif len(doomrunner_shortcuts) == 1:
+                    add_validation_item(items, "WARN", f"Steam shortcut named Doom Runner exists but exe differs: {doomrunner_shortcuts[0][1]}")
+                else:
+                    add_validation_item(items, "FAIL", f"Multiple Doom Runner Steam shortcuts exist: {len(doomrunner_shortcuts)}")
+                if extra_preset_shortcuts:
+                    add_validation_item(
+                        items,
+                        "FAIL",
+                        f"No extra DoomDeck preset Steam shortcuts remain: {', '.join(sorted(extra_preset_shortcuts))}",
+                    )
+                else:
+                    add_validation_item(items, "PASS", "No extra DoomDeck preset Steam shortcuts remain")
+                doomdeck_appids = [appid for appid, _exe in expected_doomrunner_shortcuts if appid is not None]
                 add_validation_item(
                     items,
-                    "PASS" if preset_shortcut else "WARN",
-                    "Steam shortcut exists for at least one Windows UZDoom preset with launch options",
+                    "PASS" if doomdeck_appids else "WARN",
+                    "Steam shortcut appid is available for Doom Runner Proton mapping",
                 )
                 self._validate_steam_compat_mapping(items, steam, doomdeck_appids)
             except DoomDeckError as exc:

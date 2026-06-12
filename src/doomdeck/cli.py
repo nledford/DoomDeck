@@ -7,7 +7,7 @@ Steam Deck Doom modding setup automation for:
 - Windows Doom Runner installation for Proton
 - Windows UZDoom installation for Proton
 - Brutal Doom manual-drop validation
-- Steam non-Steam shortcut integration for Doom Runner and direct UZDoom presets
+- Steam non-Steam shortcut integration for Doom Runner
 - UZDoom launch metadata for vanilla-style, UZDoom, Brutal Doom, and Project Brutality presets
 - Doom Runner options.json generation with Proton-visible Windows paths
 
@@ -72,7 +72,7 @@ from doomdeck.application.self_update import (
 )
 from doomdeck.application.steam import (
     SteamShortcutSettings,
-    add_or_update_steam_shortcut,
+    add_or_update_doomrunner_shortcut,
     doomrunner_proton_options_path,
 )
 from doomdeck.application.uzdoom import write_uzdoom_configs
@@ -914,11 +914,8 @@ def install(args: argparse.Namespace) -> int:
             shutdown_steam=args.shutdown_steam,
             proton_compat_tool=args.proton_compat_tool,
         )
-        doomrunner_appid = add_or_update_steam_shortcut(
+        doomrunner_appid = add_or_update_doomrunner_shortcut(
             steam.shortcuts_vdf,
-            "Doom Runner",
-            dirs.doomrunner / "DoomRunner.exe",
-            dirs.doomrunner,
             dirs,
             shortcut_settings,
             logger,
@@ -926,18 +923,6 @@ def install(args: argparse.Namespace) -> int:
         proton_options = doomrunner_proton_options_path(steam, doomrunner_appid)
         if proton_options:
             extra_doomrunner_options_paths.append(proton_options)
-        for preset in manifest.get("presets", []):
-            add_or_update_steam_shortcut(
-                steam.shortcuts_vdf,
-                str(preset["steam_shortcut_name"]),
-                dirs.uzdoom / "uzdoom.exe",
-                dirs.uzdoom,
-                dirs,
-                shortcut_settings,
-                logger,
-                launch_options=str(preset["launch_options"]),
-                match_exe=False,
-            )
         logger.info("Restart Steam before expecting the non-Steam shortcut to appear in Gaming Mode")
 
     write_doomrunner_live_config(
@@ -1210,7 +1195,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     install_parser.add_argument(
         "--proton-compat-tool",
         default="proton_10",
-        help="Steam compatibility tool name to force for generated Windows shortcuts",
+        help="Steam compatibility tool name to force for the generated Doom Runner shortcut",
     )
     install_parser.add_argument(
         "--brutal-doom-channel",
