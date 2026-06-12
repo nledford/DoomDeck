@@ -139,6 +139,8 @@ def test_uzdoom_configs_bind_quicksave_and_quickload_keys(tmp_path: Path) -> Non
         autoexec = (dirs.uzdoom_config / profile / "autoexec.cfg").read_text(encoding="utf-8").lower()
         assert "bind f6 quicksave" in autoexec
         assert "bind f9 quickload" in autoexec
+        assert "bind pad_lthumb quicksave" in autoexec
+        assert "bind pad_rthumb quickload" in autoexec
 
 
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

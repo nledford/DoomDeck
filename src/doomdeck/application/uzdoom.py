@@ -82,6 +82,8 @@ bind Pad_A +deck_use_select
 bind Pad_B menu_back
 bind Pad_Start menu_main
 bind Pad_Back pause
+bind Pad_LThumb quicksave
+bind Pad_RThumb quickload
 bind RTrigger +attack
 bind LShoulder weapprev
 bind RShoulder weapnext
@@ -141,6 +143,8 @@ bind Pad_X +reload
 bind Pad_Y +jump
 bind Pad_Start menu_main
 bind Pad_Back pause
+bind Pad_LThumb quicksave
+bind Pad_RThumb quickload
 bind RTrigger +attack
 bind LTrigger +altattack
 bind LShoulder weapprev

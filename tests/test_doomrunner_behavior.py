@@ -23,10 +23,11 @@ from doomdeck.domain.paths import build_dirs
 from doomdeck.domain.presets import EngineSpec, Preset, PresetManifest
 
 
-def test_doomrunner_options_are_written_to_data_path_before_config_compatibility_path(tmp_path) -> None:
+def test_doomrunner_options_are_written_to_windows_portable_path_first(tmp_path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
 
     assert doomrunner_options_paths(dirs) == [
+        dirs.doomrunner / "options.json",
         dirs.xdg_data / "DoomRunner" / "options.json",
         dirs.xdg_config / "DoomRunner" / "options.json",
     ]
@@ -66,6 +67,7 @@ def test_doomrunner_preset_builds_mod_list_and_quoted_launcher_arguments(tmp_pat
     assert built["alternative_paths"]["save_dir"] == proton_windows_path(dirs.saves / "project_brutality")
     assert f'-config "{proton_windows_path(dirs.uzdoom_config / "modern config" / "uzdoom.ini")}"' in built["additional_args"]
     assert f'+exec "{proton_windows_path(dirs.uzdoom_config / "modern config" / "autoexec.cfg")}"' in built["additional_args"]
+    assert "-savedir" not in built["additional_args"]
 
 
 def test_doomrunner_preset_keeps_raw_wad_paths_for_launching(tmp_path) -> None:
@@ -201,6 +203,7 @@ def test_doomrunner_live_config_writes_options_and_preset_directories(tmp_path) 
 
     assert doomrunner_options_paths(dirs)[0].exists()
     assert doomrunner_options_paths(dirs)[1].exists()
+    assert doomrunner_options_paths(dirs)[2].exists()
     assert extra_options_path.exists()
     assert (dirs.saves / "brutal_doom").is_dir()
     assert (dirs.screenshots / "brutal_doom").is_dir()

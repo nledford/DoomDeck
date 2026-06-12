@@ -37,10 +37,11 @@ def launcher_slug(name: str) -> str:
 
 
 def doomrunner_options_paths(dirs: Dirs) -> list[Path]:
-    # Doom Runner stores options in QStandardPaths::AppDataLocation on Linux,
-    # which honors XDG_DATA_HOME. The config mirror covers older/future builds
-    # that may use XDG_CONFIG_HOME instead.
+    # Windows Doom Runner stores options beside DoomRunner.exe when that
+    # directory is writable, which is true for DoomDeck's user-managed install.
+    # The XDG mirrors cover Linux Doom Runner builds and older/future storage.
     return [
+        dirs.doomrunner / "options.json",
         dirs.xdg_data / "DoomRunner" / "options.json",
         dirs.xdg_config / "DoomRunner" / "options.json",
     ]
@@ -111,10 +112,7 @@ def build_doomrunner_preset(dirs: Dirs, preset: PresetInput) -> dict[str, Any]:
     save_dir = dirs.saves / slug
     screenshot_dir = dirs.screenshots / slug
     mods = [{"path": proton_windows_path(path), "checked": True} for path in _preset_files(preset)]
-    additional_args = (
-        f"-noautoload -config {doomrunner_quote_arg(proton_windows_path(config))} "
-        f"-savedir {doomrunner_quote_arg(proton_windows_path(save_dir))} +exec {doomrunner_quote_arg(proton_windows_path(autoexec))}"
-    )
+    additional_args = f"-noautoload -config {doomrunner_quote_arg(proton_windows_path(config))} +exec {doomrunner_quote_arg(proton_windows_path(autoexec))}"
     return {
         "name": name,
         "selected_engine": DOOMRUNNER_ENGINE_ID,

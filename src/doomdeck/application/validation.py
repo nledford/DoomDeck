@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shlex
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, cast
 
 from doomdeck.application.doomrunner import DOOMRUNNER_ENGINE_ID, doomrunner_options_paths
 from doomdeck.application.proton import proton_linux_path
+from doomdeck.application.steam import doomrunner_proton_options_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
@@ -207,6 +209,8 @@ class InstallationValidator:
                         "bind pad_start menu_main",
                         "bind f6 quicksave",
                         "bind f9 quickload",
+                        "bind pad_lthumb quicksave",
+                        "bind pad_rthumb quickload",
                     ]
                 )
                 add_validation_item(items, "PASS" if controller_ok else "FAIL", f"{profile} UZDoom Steam Deck controller bindings: {autoexec_path}")
@@ -231,8 +235,19 @@ class InstallationValidator:
 
     def _validate_doomrunner_live_options(self, items: list[ValidationItem], dirs: Dirs) -> None:
         live_options_path = doomrunner_options_paths(dirs)[0]
+        self._validate_doomrunner_options_path(items, dirs, live_options_path, "Doom Runner generated", missing_level="FAIL")
+
+    def _validate_doomrunner_options_path(
+        self,
+        items: list[ValidationItem],
+        dirs: Dirs,
+        live_options_path: Path,
+        label: str,
+        *,
+        missing_level: ValidationLevel | str,
+    ) -> None:
         if live_options_path.exists():
-            live_options = self._read_json_object_for_validation(items, live_options_path, "Doom Runner generated options JSON")
+            live_options = self._read_json_object_for_validation(items, live_options_path, f"{label} options JSON")
             if live_options is None:
                 return
             engine_list = live_options.get("engines", {}).get("engine_list", [])
@@ -242,21 +257,72 @@ class InstallationValidator:
                 and proton_linux_path(engine.get("path", "")).exists()
                 for engine in engine_list
             )
-            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"Doom Runner generated config has usable UZDoom engine: {live_options_path}")
+            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"{label} config has usable UZDoom engine: {live_options_path}")
             iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
             iwad_ok = any(bool(iwad.get("path")) and proton_linux_path(iwad.get("path", "")).exists() for iwad in iwad_list)
-            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"Doom Runner generated config has IWAD entries: {live_options_path}")
+            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"{label} config has IWAD entries: {live_options_path}")
             live_presets = live_options.get("presets", [])
             preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
-            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"Doom Runner generated config has launchable presets: {live_options_path}")
+            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"{label} config has launchable presets: {live_options_path}")
+            resolved_presets = self._resolved_generated_preset_names(live_options)
+            add_validation_item(
+                items,
+                "PASS" if resolved_presets else "FAIL",
+                f"{label} config resolves UZDoom launch paths for presets: {', '.join(resolved_presets) if resolved_presets else live_options_path}",
+            )
             video_options = live_options.get("video_options", {})
             resolution_ok = (
                 video_options.get("resolution_x") == STEAM_DECK_WIDTH
                 and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
             )
-            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"Doom Runner generated config uses Steam Deck resolution: {live_options_path}")
+            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"{label} config uses Steam Deck resolution: {live_options_path}")
         else:
-            add_validation_item(items, "FAIL", f"Doom Runner generated options missing: {live_options_path}")
+            add_validation_item(items, missing_level, f"{label} options missing: {live_options_path}")
+
+    def _resolved_generated_preset_names(self, live_options: dict[str, Any]) -> list[str]:
+        engine_list = live_options.get("engines", {}).get("engine_list", [])
+        if not isinstance(engine_list, list):
+            return []
+        engines = {
+            str(engine.get("id")): engine
+            for engine in engine_list
+            if isinstance(engine, dict) and bool(engine.get("id")) and proton_linux_path(engine.get("path", "")).exists()
+        }
+        live_presets = live_options.get("presets", [])
+        if not isinstance(live_presets, list):
+            return []
+        names: list[str] = []
+        for preset in live_presets:
+            if not isinstance(preset, dict):
+                continue
+            selected_engine = str(preset.get("selected_engine", ""))
+            if selected_engine not in engines:
+                continue
+            if not proton_linux_path(preset.get("selected_IWAD", "")).exists():
+                continue
+            mods = preset.get("mods", [])
+            if isinstance(mods, list) and any(
+                isinstance(mod, dict) and mod.get("checked", True) and not proton_linux_path(mod.get("path", "")).exists()
+                for mod in mods
+            ):
+                continue
+            if not self._additional_args_paths_exist(str(preset.get("additional_args", ""))):
+                continue
+            names.append(str(preset.get("name", "")).strip() or "<unnamed>")
+        return names
+
+    def _additional_args_paths_exist(self, additional_args: str) -> bool:
+        try:
+            tokens = shlex.split(additional_args)
+        except ValueError:
+            return False
+        for option in ["-config", "+exec"]:
+            if option not in tokens:
+                return False
+            index = tokens.index(option) + 1
+            if index >= len(tokens) or not proton_linux_path(tokens[index]).exists():
+                return False
+        return True
 
     def _validate_shell_scripts(self, items: list[ValidationItem], dirs: Dirs) -> None:
         shell_scripts = sorted(dirs.launchers.glob("*.sh"))
@@ -329,10 +395,25 @@ class InstallationValidator:
                     "Steam shortcut appid is available for Doom Runner Proton mapping",
                 )
                 self._validate_steam_compat_mapping(items, steam, doomdeck_appids)
+                self._validate_doomrunner_proton_options(items, dirs, steam, doomdeck_appids)
             except DoomDeckError as exc:
                 add_validation_item(items, "FAIL", f"Could not parse shortcuts.vdf: {exc}")
         else:
             add_validation_item(items, "WARN", "Steam shortcuts.vdf does not exist yet or Steam user was not detected")
+
+    def _validate_doomrunner_proton_options(self, items: list[ValidationItem], dirs: Dirs, steam: SteamInfo, appids: list[int]) -> None:
+        for appid in appids:
+            proton_options = doomrunner_proton_options_path(steam, appid)
+            if proton_options is not None and proton_options.exists():
+                self._validate_doomrunner_options_path(
+                    items,
+                    dirs,
+                    proton_options,
+                    "Doom Runner Proton-prefix",
+                    missing_level="WARN",
+                )
+            elif proton_options is not None:
+                add_validation_item(items, "WARN", f"Doom Runner Proton-prefix options missing: {proton_options}")
 
     def _validate_steam_compat_mapping(self, items: list[ValidationItem], steam: SteamInfo, appids: list[int]) -> None:
         if not appids:
