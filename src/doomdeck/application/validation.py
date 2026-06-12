@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import shlex
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, cast
 
-from doomdeck.application.doomrunner import DOOMRUNNER_ENGINE_ID, doomrunner_options_paths
-from doomdeck.application.proton import proton_linux_path
+from doomdeck.application.doomrunner import doomrunner_options_paths
+from doomdeck.application.doomrunner_validation import inspect_doomrunner_options
 from doomdeck.application.steam import doomrunner_proton_options_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
@@ -272,79 +271,19 @@ class InstallationValidator:
             live_options = self._read_json_object_for_validation(items, live_options_path, f"{label} options JSON")
             if live_options is None:
                 return
-            engine_list = live_options.get("engines", {}).get("engine_list", [])
-            engine_ok = any(
-                engine.get("id") == DOOMRUNNER_ENGINE_ID
-                and bool(engine.get("path"))
-                and proton_linux_path(engine.get("path", "")).exists()
-                for engine in engine_list
-            )
-            add_validation_item(items, "PASS" if engine_ok else "FAIL", f"{label} config has usable UZDoom engine: {live_options_path}")
-            iwad_list = live_options.get("IWADs", {}).get("IWAD_list", [])
-            iwad_ok = any(bool(iwad.get("path")) and proton_linux_path(iwad.get("path", "")).exists() for iwad in iwad_list)
-            add_validation_item(items, "PASS" if iwad_ok else "FAIL", f"{label} config has IWAD entries: {live_options_path}")
-            live_presets = live_options.get("presets", [])
-            preset_ok = any(preset.get("selected_engine") == DOOMRUNNER_ENGINE_ID and preset.get("selected_IWAD") for preset in live_presets)
-            add_validation_item(items, "PASS" if preset_ok else "FAIL", f"{label} config has launchable presets: {live_options_path}")
-            resolved_presets = self._resolved_generated_preset_names(live_options)
+            inspection = inspect_doomrunner_options(live_options)
+            add_validation_item(items, "PASS" if inspection.engine_ok else "FAIL", f"{label} config has usable UZDoom engine: {live_options_path}")
+            add_validation_item(items, "PASS" if inspection.iwad_ok else "FAIL", f"{label} config has IWAD entries: {live_options_path}")
+            add_validation_item(items, "PASS" if inspection.launchable_preset_ok else "FAIL", f"{label} config has launchable presets: {live_options_path}")
+            resolved_presets = inspection.resolved_preset_names
             add_validation_item(
                 items,
                 "PASS" if resolved_presets else "FAIL",
                 f"{label} config resolves UZDoom launch paths for presets: {', '.join(resolved_presets) if resolved_presets else live_options_path}",
             )
-            video_options = live_options.get("video_options", {})
-            resolution_ok = (
-                video_options.get("resolution_x") == STEAM_DECK_WIDTH
-                and video_options.get("resolution_y") == STEAM_DECK_HEIGHT
-            )
-            add_validation_item(items, "PASS" if resolution_ok else "FAIL", f"{label} config uses Steam Deck resolution: {live_options_path}")
+            add_validation_item(items, "PASS" if inspection.steam_deck_resolution_ok else "FAIL", f"{label} config uses Steam Deck resolution: {live_options_path}")
         else:
             add_validation_item(items, missing_level, f"{label} options missing: {live_options_path}")
-
-    def _resolved_generated_preset_names(self, live_options: dict[str, Any]) -> list[str]:
-        engine_list = live_options.get("engines", {}).get("engine_list", [])
-        if not isinstance(engine_list, list):
-            return []
-        engines = {
-            str(engine.get("id")): engine
-            for engine in engine_list
-            if isinstance(engine, dict) and bool(engine.get("id")) and proton_linux_path(engine.get("path", "")).exists()
-        }
-        live_presets = live_options.get("presets", [])
-        if not isinstance(live_presets, list):
-            return []
-        names: list[str] = []
-        for preset in live_presets:
-            if not isinstance(preset, dict):
-                continue
-            selected_engine = str(preset.get("selected_engine", ""))
-            if selected_engine not in engines:
-                continue
-            if not proton_linux_path(preset.get("selected_IWAD", "")).exists():
-                continue
-            mods = preset.get("mods", [])
-            if isinstance(mods, list) and any(
-                isinstance(mod, dict) and mod.get("checked", True) and not proton_linux_path(mod.get("path", "")).exists()
-                for mod in mods
-            ):
-                continue
-            if not self._additional_args_paths_exist(str(preset.get("additional_args", ""))):
-                continue
-            names.append(str(preset.get("name", "")).strip() or "<unnamed>")
-        return names
-
-    def _additional_args_paths_exist(self, additional_args: str) -> bool:
-        try:
-            tokens = shlex.split(additional_args)
-        except ValueError:
-            return False
-        for option in ["-config", "+exec"]:
-            if option not in tokens:
-                return False
-            index = tokens.index(option) + 1
-            if index >= len(tokens) or not proton_linux_path(tokens[index]).exists():
-                return False
-        return True
 
     def _validate_shell_scripts(self, items: list[ValidationItem], dirs: Dirs) -> None:
         shell_scripts = sorted(dirs.launchers.glob("*.sh"))
