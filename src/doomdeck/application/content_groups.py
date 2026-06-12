@@ -11,6 +11,7 @@ from typing import Iterable, Mapping, cast
 from doomdeck.domain.content import ContentGroup, ContentItem
 from doomdeck.domain.models import Dirs
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
+from doomdeck.domain.wads import PWAD_DISPLAY_NAME_OVERRIDES_FILE, pwad_display_name
 
 CONTENT_GROUP_SCHEMA = "doom-deck-setup/content-groups/v1"
 CONTENT_SUFFIXES = {".pk3", ".wad", ".zip"}
@@ -122,9 +123,18 @@ def infer_group_id(item: ContentItem) -> str:
 
 
 def build_installed_content_groups(dirs: Dirs, manifest: Mapping[str, object]) -> dict[str, list[ContentGroup]]:
+    pwad_display_name_overrides = _pwad_display_name_overrides(dirs, manifest)
     return {
         "presets": build_content_groups(_preset_items(manifest)),
-        "map_packs": build_content_groups(_file_items(dirs.pwads, "map_pack", dirs.root)),
+        "map_packs": build_content_groups(
+            _file_items(
+                dirs.pwads,
+                "map_pack",
+                dirs.root,
+                display_name_overrides=pwad_display_name_overrides,
+                pwads_dir=dirs.pwads,
+            )
+        ),
         "mods": build_content_groups(_mod_items(dirs)),
     }
 
@@ -163,7 +173,14 @@ def _preset_items(manifest: Mapping[str, object]) -> list[ContentItem]:
     return items
 
 
-def _file_items(directory: Path, kind: str, root: Path) -> list[ContentItem]:
+def _file_items(
+    directory: Path,
+    kind: str,
+    root: Path,
+    *,
+    display_name_overrides: Mapping[str, str] | None = None,
+    pwads_dir: Path | None = None,
+) -> list[ContentItem]:
     if not directory.exists():
         return []
     items: list[ContentItem] = []
@@ -171,7 +188,7 @@ def _file_items(directory: Path, kind: str, root: Path) -> list[ContentItem]:
         items.append(
             ContentItem(
                 id=f"{kind}:{_stable_path_id(path, root)}",
-                display_name=_display_name(path),
+                display_name=_display_name(path, kind, root, display_name_overrides or {}, pwads_dir),
                 kind=kind,
                 path=path,
             )
@@ -217,6 +234,36 @@ def _managed_mod_metadata_by_path(dirs: Dirs) -> dict[Path, dict[str, str]]:
     return metadata
 
 
+def _pwad_display_name_overrides(dirs: Dirs, manifest: Mapping[str, object]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    overrides.update(_display_name_mapping(manifest.get("pwad_display_names", {})))
+    overrides.update(_display_name_mapping(manifest.get("wad_display_names", {})))
+    overrides.update(_display_name_mapping(_read_json_object(dirs.doomrunner_config / PWAD_DISPLAY_NAME_OVERRIDES_FILE)))
+    return overrides
+
+
+def _read_json_object(path: Path) -> Mapping[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _display_name_mapping(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    value_mapping = cast(Mapping[str, object], value)
+    source: object = value_mapping.get("display_names")
+    if source is None:
+        source = value_mapping
+    if not isinstance(source, dict):
+        return {}
+    return {str(key): str(display_name).strip() for key, display_name in source.items() if str(display_name).strip()}
+
+
 def _match_rules(kind: str, values: Iterable[str]) -> str:
     texts = [value for value in values if value]
     for rule in GROUP_RULES:
@@ -258,7 +305,15 @@ def _stable_path_id(path: Path, root: Path) -> str:
     return _slug_id(relative.as_posix())
 
 
-def _display_name(path: Path) -> str:
+def _display_name(
+    path: Path,
+    kind: str,
+    root: Path,
+    display_name_overrides: Mapping[str, str],
+    pwads_dir: Path | None,
+) -> str:
+    if kind == "map_pack":
+        return pwad_display_name(path, overrides=display_name_overrides, root=root, pwads_dir=pwads_dir)
     return path.stem.strip() or path.name
 
 

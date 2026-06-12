@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from doomdeck.application.content_groups import (
     build_content_groups,
     build_installed_content_groups,
@@ -43,7 +45,7 @@ def test_grouping_known_related_content_by_metadata_and_paths(tmp_path) -> None:
     assert group_names(grouped["presets"]) == {"brutal-doom-forks": ["Project Brutality"]}
     assert group_names(grouped["map_packs"]) == {
         "master-levels": ["ATTACK"],
-        "map-packs": ["DTWID"],
+        "map-packs": ["Doom The Way ID Did"],
     }
     assert group_names(grouped["mods"]) == {
         "brutal-doom-forks": ["brutal-doom"],
@@ -65,6 +67,83 @@ def test_unknown_items_are_kept_in_other_group(tmp_path) -> None:
     groups = build_content_groups([unknown])
 
     assert group_names(groups) == {"other": ["mystery-addon"]}
+
+
+def test_custom_wad_friendly_name_keeps_original_path(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    wad_path = dirs.pwads / "DTWID.wad"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"wad")
+
+    groups = build_installed_content_groups(dirs, {"presets": []})
+    serialized = serialize_content_groups(groups["map_packs"])
+
+    assert serialized[0]["items"] == [
+        {
+            "id": "map_pack:pwads-dtwid-wad",
+            "display_name": "Doom The Way ID Did",
+            "kind": "map_pack",
+            "path": str(wad_path),
+            "selectable": True,
+        }
+    ]
+    assert wad_path.exists()
+
+
+def test_unknown_wad_display_name_fallback_is_clean(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    wad_path = dirs.pwads / "my_unknown-map.v2.wad"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"wad")
+
+    groups = build_installed_content_groups(dirs, {"presets": []})
+
+    assert group_names(groups["map_packs"]) == {"other": ["My Unknown Map V2"]}
+
+
+def test_user_wad_display_name_override_wins(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    wad_path = dirs.pwads / "ambiguous.wad"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"wad")
+    dirs.doomrunner_config.mkdir(parents=True)
+    (dirs.doomrunner_config / "wad-display-names.json").write_text(
+        json.dumps(
+            {
+                "schema": "doom-deck-setup/wad-display-names/v1",
+                "display_names": {
+                    "ambiguous.wad": "Community MegaWAD",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    groups = build_installed_content_groups(dirs, {"presets": []})
+
+    assert group_names(groups["map_packs"]) == {"map-packs": ["Community MegaWAD"]}
+
+
+def test_duplicate_display_names_keep_distinct_paths(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    first = dirs.pwads / "set-a" / "DTWID.wad"
+    second = dirs.pwads / "set-b" / "DTWID.wad"
+    for path in [first, second]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"wad")
+
+    groups = build_installed_content_groups(dirs, {"presets": []})
+    serialized = serialize_content_groups(groups["map_packs"])
+    items = serialized[0]["items"]
+    assert isinstance(items, list)
+    typed_items: list[dict[str, object]] = []
+    for item in items:
+        assert isinstance(item, dict)
+        typed_items.append({str(key): value for key, value in item.items()})
+
+    assert [item["display_name"] for item in typed_items] == ["Doom The Way ID Did", "Doom The Way ID Did"]
+    assert [item["path"] for item in typed_items] == [str(first), str(second)]
+    assert [item["id"] for item in typed_items] == ["map_pack:pwads-set-a-dtwid-wad", "map_pack:pwads-set-b-dtwid-wad"]
 
 
 def test_newly_added_wad_and_mod_appear_in_groups_on_refresh(tmp_path) -> None:

@@ -60,6 +60,23 @@ def test_doomrunner_preset_builds_mod_list_and_quoted_launcher_arguments(tmp_pat
     assert f'+exec "{dirs.uzdoom_config / "modern config" / "autoexec.cfg"}"' in built["additional_args"]
 
 
+def test_doomrunner_preset_keeps_raw_wad_paths_for_launching(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    wad_path = dirs.pwads / "DTWID.wad"
+    preset = {
+        "name": "Custom WAD",
+        "iwad": str(dirs.iwads / "DOOM2.WAD"),
+        "files": [str(wad_path)],
+        "config": str(dirs.uzdoom_config / "classic" / "uzdoom.ini"),
+        "autoexec": str(dirs.uzdoom_config / "classic" / "autoexec.cfg"),
+    }
+
+    built = build_doomrunner_preset(dirs, preset)
+
+    assert built["mods"] == [{"path": str(wad_path), "checked": True}]
+    assert "Doom The Way ID Did" not in str(built)
+
+
 def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     dirs.iwads.mkdir(parents=True)
