@@ -16,7 +16,7 @@ In plain terms, it:
 - Downloads or installs Project Brutality.
 - Creates ready-to-use Doom Runner presets.
 - Creates exactly one Steam shortcut for Doom Runner, with all generated presets available inside Doom Runner.
-- Writes Steam Deck-friendly UZDoom controller, display, and graphics settings.
+- Writes Steam Deck-friendly UZDoom controller, display, graphics, quick save, and quick load settings.
 - Forces the generated Doom Runner shortcut to use Steam Proton by default, so Steam Input can expose Deck, Xbox, PlayStation, and other supported controllers to UZDoom as gamepads.
 - Backs up files before replacing important generated files or modifying Steam shortcut/config files.
 
@@ -121,7 +121,7 @@ On Steam Deck, this normally resolves to:
 
 Important subfolders include:
 
-- `tools/doomrunner/` - Windows Doom Runner executable.
+- `tools/doomrunner/` - Windows Doom Runner executable and primary generated `options.json`.
 - `source-ports/uzdoom/` - Windows UZDoom executable.
 - `iwads/` - Main Doom game data files copied from Steam.
 - `pwads/` - Add-on WAD files copied from Steam.
@@ -205,7 +205,7 @@ The `install` command creates the folder layout, installs Windows Doom tools, co
 | `--skip-brutal-doom` | Does not download, update, or install Brutal Doom. If an existing managed Brutal Doom file exists, it can still be used. | Use this if you only want vanilla UZDoom or Project Brutality. |
 | `--skip-project-brutality` | Does not download or install Project Brutality. If an existing managed Project Brutality file exists, it can still be used. | Use this if you only want vanilla UZDoom or Brutal Doom. |
 | `--skip-steam-shortcut` | Does not edit Steam's `shortcuts.vdf` or Proton compatibility mapping. | Use this if you do not want DoomDeck to add Doom Runner to Steam. |
-| `--skip-doomrunner-live-config` | Does not write Doom Runner's generated `options.json` copies. | Use this if you already customized Doom Runner and do not want DoomDeck to overwrite generated settings. Existing options are backed up when rewritten, but this avoids touching them at all. |
+| `--skip-doomrunner-live-config` | Does not write Doom Runner's generated `options.json` copies. | Use this if you already customized Doom Runner and do not want DoomDeck to overwrite generated settings. Existing options are backed up when rewritten, but this avoids touching the portable Doom Runner options file and compatibility mirrors. |
 | `--shutdown-steam` | Attempts to shut down Steam before editing `shortcuts.vdf` and `localconfig.vdf`. | Use this if Steam is running and you want the script to close it before adding or updating shortcuts. |
 | `--allow-steam-running` | Allows Steam config modification even if Steam appears to be running. | Use this only if you understand the risk. Steam can overwrite shortcut or compatibility changes while it is open. |
 | `--experimental-doomrunner-config` | Deprecated compatibility flag. Doom Runner generated options are now written by default. | You usually do not need this. It only records that the old flag was requested. |
@@ -277,7 +277,7 @@ Basic validation:
 doomdeck validate
 ```
 
-`validate` checks for the generated folder layout, Windows Doom Runner and UZDoom executables, IWADs, add-on WADs, mod aliases, preset manifest, Doom Runner options, UZDoom configs, shell script syntax, Steam detection, the single generated Doom Runner Steam shortcut, Proton compatibility mapping, and backups.
+`validate` checks for the generated folder layout, Windows Doom Runner and UZDoom executables, IWADs, add-on WADs, mod aliases, preset manifest, Doom Runner options, launchable preset paths, UZDoom configs, shell script syntax, Steam detection, the single generated Doom Runner Steam shortcut, Proton compatibility mapping, and backups.
 
 It prints results as:
 
@@ -388,6 +388,14 @@ If detection fails, pass `--steam-root` or `--steam-user-id`.
 If Steam is running, DoomDeck normally refuses to edit Steam shortcut and compatibility files because Steam may overwrite changes. Close Steam first, use `--shutdown-steam`, or use `--skip-steam-shortcut`.
 
 After adding or updating the Steam shortcut, restart Steam before expecting `Doom Runner` to appear in Gaming Mode.
+
+Windows Doom Runner stores its data beside `DoomRunner.exe` when that directory is writable. DoomDeck installs Doom Runner into your user-managed Doom folder, so it writes the primary generated Doom Runner configuration to:
+
+```text
+$HOME/Games/Doom/tools/doomrunner/options.json
+```
+
+DoomDeck also writes compatibility mirror copies under the managed config folders and the generated Steam shortcut's Proton prefix.
 
 ## Mod Notes
 

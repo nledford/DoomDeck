@@ -90,7 +90,7 @@ The generated UZDoom configs enable joystick input and bind common Steam Deck ga
 
 The generated UZDoom configs also default to fullscreen {STEAM_DECK_WIDTH}x{STEAM_DECK_HEIGHT}, vsync on, and a {STEAM_DECK_TARGET_FPS} FPS cap.
 
-For Steam Deck rear buttons, set Steam Input so L4 sends `F6` and R4 sends `F9`. DoomDeck binds `F6` to UZDoom quick save and `F9` to UZDoom quick load in both generated profiles.
+DoomDeck binds `F6` and left stick click to UZDoom quick save, and `F9` and right stick click to UZDoom quick load in both generated profiles. If you prefer Steam Deck rear buttons, optionally set Steam Input so L4 sends `F6` and R4 sends `F9`.
 
 ## Classic Doom controls
 
@@ -103,8 +103,8 @@ Recommended Steam Deck layout for the `Vanilla Doom` preset:
 - B: back in menus.
 - Left/right bumpers: weapon cycling.
 - Menu/Start: open menu.
-- L4: quick save, through a Steam Input `F6` mapping.
-- R4: quick load, through a Steam Input `F9` mapping.
+- Left stick click: quick save.
+- Right stick click: quick load.
 - Disable gyro and vertical mouse if you want a stricter classic feel.
 
 The generated `configs/uzdoom/classic/autoexec.cfg` sets `freelook false`, `sv_allowjump false`, and `sv_allowcrouch false`.
@@ -123,8 +123,8 @@ Recommended Steam Deck layout for the `UZDoom`, `Brutal Doom`, and `Project Brut
 - Y: jump.
 - Bumpers: weapon cycle.
 - Menu/Start: open menu.
-- L4: quick save, through a Steam Input `F6` mapping.
-- R4: quick load, through a Steam Input `F9` mapping.
+- Left stick click: quick save.
+- Right stick click: quick load.
 - Optional gyro: mouse as gyro, active on right-stick touch or left trigger.
 
 The generated `configs/uzdoom/modern/autoexec.cfg` enables freelook, jump, crouch, reload, alt-fire, quick save, and quick load bindings.
@@ -132,13 +132,13 @@ The generated `configs/uzdoom/modern/autoexec.cfg` enables freelook, jump, crouc
     live_options_primary = doomrunner_options_paths(dirs)[0]
     doomrunner_guide = f"""# Doom Runner Setup Guide
 
-DoomDeck installs the Windows builds of Doom Runner and UZDoom, copies Steam IWADs, creates one Doom Runner Steam shortcut that runs through Proton, writes Doom Runner's generated options file, and writes a stable preset manifest:
+DoomDeck installs the Windows builds of Doom Runner and UZDoom, copies Steam IWADs, creates one Doom Runner Steam shortcut that runs through Proton, writes Doom Runner's generated options file beside `DoomRunner.exe`, and writes a stable preset manifest:
 
 `{live_options_primary}`
 
 `{dirs.doomrunner_config / 'preset-manifest.json'}`
 
-DoomDeck also writes a Doom Runner options copy into the generated Steam shortcut's Proton prefix when Steam shortcut creation is enabled. All generated presets are launched from inside Doom Runner.
+DoomDeck also writes a Doom Runner options copy into the generated Steam shortcut's Proton prefix when Steam shortcut creation is enabled. The portable options file beside `DoomRunner.exe` is the primary file for DoomDeck's user-writable Windows install; the Proton prefix copy covers Doom Runner's fallback `%AppData%` behavior. All generated presets are launched from inside Doom Runner.
 
 Doom Runner should open through Steam/Proton with the generated UZDoom engine, IWADs, and presets already listed. Existing generated Doom Runner options are backed up under:
 
