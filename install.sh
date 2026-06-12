@@ -74,7 +74,58 @@ info "Downloading $archive_url"
 download_archive "$archive_path" || fail "failed to download DoomDeck source archive"
 
 mkdir -p "$extract_dir" "$tmp_install"
-tar -xzf "$archive_path" -C "$extract_dir" || fail "failed to extract DoomDeck source archive"
+"$python_path" - "$archive_path" "$extract_dir" <<'PY' || fail "failed to safely extract DoomDeck source archive"
+import os
+import shutil
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+
+archive_path = Path(sys.argv[1])
+dest = Path(sys.argv[2]).resolve()
+
+
+def reject(message):
+    print(f"unsafe source archive: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    with tarfile.open(archive_path, "r:gz") as archive:
+        validated = []
+        for member in archive.getmembers():
+            member_path = PurePosixPath(member.name)
+            parts = member_path.parts
+            if member_path.is_absolute():
+                reject(f"absolute path: {member.name}")
+            if not parts or any(part in {"", ".", ".."} for part in parts):
+                reject(f"unsafe path: {member.name}")
+            target = dest.joinpath(*parts).resolve()
+            try:
+                target.relative_to(dest)
+            except ValueError:
+                reject(f"path escapes extraction directory: {member.name}")
+            if member.issym() or member.islnk():
+                reject(f"link member: {member.name}")
+            if not member.isfile() and not member.isdir():
+                reject(f"special file: {member.name}")
+            validated.append((member, target))
+
+        for member, target in validated:
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                reject(f"unreadable file member: {member.name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            os.chmod(target, member.mode & 0o755)
+except tarfile.TarError as exc:
+    print(f"invalid source archive: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 source_dir=$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 [ -n "$source_dir" ] || fail "source archive did not contain a top-level directory"
