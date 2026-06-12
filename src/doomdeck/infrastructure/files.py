@@ -57,11 +57,23 @@ def files_equal(a: Path, b: Path) -> bool:
     return sha256_file(a) == sha256_file(b)
 
 
+def backup_destination(backups_dir: Path, label: str, stamp: str) -> Path:
+    base = backups_dir / f"{label}.{stamp}"
+    if not base.exists():
+        return base
+    index = 1
+    while True:
+        candidate = backups_dir / f"{label}.{stamp}.{index:03d}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
 def backup_path(path: Path, backups_dir: Path, dry_run: bool, logger: logging.Logger, label: Optional[str] = None) -> Optional[Path]:
     if not path.exists():
         return None
     label_text = label or path.name
-    dest = backups_dir / f"{label_text}.{now_stamp()}"
+    dest = backup_destination(backups_dir, label_text, now_stamp())
     logger.info("Back up %s -> %s", path, dest)
     if dry_run:
         return dest
