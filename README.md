@@ -91,7 +91,7 @@ From the repo folder:
 uv run doomdeck install
 ```
 
-After it finishes, restart Steam. A single `Doom Runner` non-Steam game should appear. Launch Doom Runner from Steam, then choose `Vanilla Doom`, `UZDoom`, `Brutal Doom`, `Project Brutality`, or any other generated preset from Doom Runner's UI.
+After it finishes, restart Steam. A single `Doom Runner` non-Steam game should appear. Launch Doom Runner from Steam, then choose a generated preset from Doom Runner's UI. `Vanilla Doom` and `UZDoom` appear when DoomDeck finds a usable IWAD; `Brutal Doom` and `Project Brutality` appear when their managed mod files are installed.
 
 To check the setup later:
 
@@ -202,8 +202,8 @@ The `install` command creates the folder layout, installs Windows Doom tools, co
 | `--brutal-doom-channel stable` | Prefers non-beta Brutal Doom candidates. | Use this if you prefer a less experimental Brutal Doom version. |
 | `--brutal-doom-file PATH` | Installs Brutal Doom from a local `.pk3`, `.wad`, or `.zip` file. | Use this if you downloaded Brutal Doom manually in a browser. |
 | `--project-brutality-file PATH` | Installs Project Brutality from a local `.pk3`, `.wad`, or `.zip` file. | Use this if you downloaded Project Brutality manually. |
-| `--skip-brutal-doom` | Does not download, update, or install Brutal Doom. If an existing managed Brutal Doom file exists, it can still be used. | Use this if you only want vanilla UZDoom or Project Brutality. |
-| `--skip-project-brutality` | Does not download or install Project Brutality. If an existing managed Project Brutality file exists, it can still be used. | Use this if you only want vanilla UZDoom or Brutal Doom. |
+| `--skip-brutal-doom` | Does not download, update, or install Brutal Doom. If an existing managed Brutal Doom file exists, it can still be used; otherwise the Brutal Doom preset is omitted. | Use this if you only want vanilla UZDoom or Project Brutality. |
+| `--skip-project-brutality` | Does not download or install Project Brutality. If an existing managed Project Brutality file exists, it can still be used; otherwise the Project Brutality preset is omitted. | Use this if you only want vanilla UZDoom or Brutal Doom. |
 | `--skip-steam-shortcut` | Does not edit Steam's `shortcuts.vdf` or Proton compatibility mapping. | Use this if you do not want DoomDeck to add Doom Runner to Steam. |
 | `--skip-doomrunner-live-config` | Does not write Doom Runner's generated `options.json` copies. | Use this if you already customized Doom Runner and do not want DoomDeck to overwrite generated settings. Existing options are backed up when rewritten, but this avoids touching the portable Doom Runner options file and compatibility mirrors. |
 | `--shutdown-steam` | Attempts to shut down Steam before editing `shortcuts.vdf` and `localconfig.vdf`. | Use this if Steam is running and you want the script to close it before adding or updating shortcuts. |
