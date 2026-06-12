@@ -392,6 +392,21 @@ pwads/
 
 Rerunning the full installer preserves existing custom PWADs. If a Steam add-on WAD has the same destination name as a file already in `pwads/`, DoomDeck leaves the existing file in place.
 
+### Automatic Content Groups
+
+DoomDeck builds Doom Runner-style group metadata for presets, map packs, and mods. The generated group data is written to:
+
+```text
+configs/doomrunner/preset-manifest.json
+configs/doomrunner/content-groups.json
+```
+
+Full installs also include the same metadata in Doom Runner's generated live `options.json`. Running `install-wads` refreshes `content-groups.json` and updates the existing preset manifest or live options file when they are present.
+
+Grouping is automatic. DoomDeck prefers explicit metadata such as managed mod metadata and preset categories, then directory/package names, then conservative filename heuristics. Current groups include Brutal Doom forks, weapon mods, total conversions, Master Levels, map packs, mutators, textures, visors, music, and Other.
+
+Group headers are metadata only. They are not written as selectable WADs, mods, map packs, or launchable presets, so existing launch paths and preset references remain valid.
+
 ## Safety Boundaries
 
 DoomDeck downloads executable tools and mod archives only over HTTPS. For automatically discovered GitHub and ModDB downloads, DoomDeck also restricts the initial download host to the expected upstream service and verifies available size or checksum metadata before installing the payload.
