@@ -3,6 +3,14 @@ from __future__ import annotations
 
 from .deck import STEAM_DECK_HEIGHT, STEAM_DECK_TARGET_FPS, STEAM_DECK_WIDTH
 from .downloads import DownloadPolicy, DownloadVerification
+from .doomrunner import (
+    DoomRunnerEngine,
+    DoomRunnerIWAD,
+    DoomRunnerMod,
+    DoomRunnerOptions,
+    DoomRunnerPreset,
+    DoomRunnerPresetPaths,
+)
 from .models import DoomDeckError, Dirs, GitHubAsset, ModDBDownload, SteamInfo, ValidationItem, ValidationLevel
 from .mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, InstalledModMetadata, ManagedMod, ModSource
 from .paths import all_managed_dirs, build_dirs, expand_path
@@ -14,6 +22,12 @@ __all__ = [
     "Dirs",
     "DownloadPolicy",
     "DownloadVerification",
+    "DoomRunnerEngine",
+    "DoomRunnerIWAD",
+    "DoomRunnerMod",
+    "DoomRunnerOptions",
+    "DoomRunnerPreset",
+    "DoomRunnerPresetPaths",
     "EngineSpec",
     "GitHubAsset",
     "InstalledModMetadata",

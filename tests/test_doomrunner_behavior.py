@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -9,6 +10,7 @@ from doomdeck.application.doomrunner import (
     DoomRunnerLiveConfigSettings,
     build_doomrunner_iwad_entries,
     build_doomrunner_options,
+    build_doomrunner_options_model,
     build_doomrunner_preset,
     choose_doomrunner_default_iwad,
     choose_doomrunner_selected_preset,
@@ -18,6 +20,14 @@ from doomdeck.application.doomrunner import (
     write_doomrunner_live_config,
 )
 from doomdeck.application.proton import proton_windows_path
+from doomdeck.domain.doomrunner import (
+    DoomRunnerEngine,
+    DoomRunnerIWAD,
+    DoomRunnerMod,
+    DoomRunnerOptions,
+    DoomRunnerPreset,
+    DoomRunnerPresetPaths,
+)
 from doomdeck.domain.models import DoomDeckError
 from doomdeck.domain.paths import build_dirs
 from doomdeck.domain.presets import EngineSpec, Preset, PresetManifest
@@ -122,6 +132,109 @@ def test_doomrunner_options_select_highest_value_available_preset(tmp_path) -> N
     assert options["content_groups"] == manifest.get("content_groups", {})
     assert options["video_options"]["resolution_x"] == 1280
     assert options["video_options"]["resolution_y"] == 800
+
+
+def test_doomrunner_options_model_serializes_existing_contract() -> None:
+    options = DoomRunnerOptions(
+        version="1.9.2",
+        engine=DoomRunnerEngine(
+            id="doomdeck-uzdoom",
+            name="UZDoom",
+            path="Z:/doom/source-ports/uzdoom/uzdoom.exe",
+            config_dir="Z:/doom/configs/uzdoom",
+            data_dir="Z:/doom",
+            family="ZDoom",
+        ),
+        iwad_directory="Z:/doom/iwads",
+        default_iwad="Z:/doom/iwads/DOOM2.WAD",
+        iwads=(DoomRunnerIWAD(name="Doom II: Hell on Earth", path="Z:/doom/iwads/DOOM2.WAD"),),
+        maps_directory="Z:/doom/pwads",
+        mods_last_used_dir="Z:/doom/mods",
+        presets=(
+            DoomRunnerPreset(
+                name="Brutal Doom",
+                selected_engine="doomdeck-uzdoom",
+                selected_iwad="Z:/doom/iwads/DOOM2.WAD",
+                mods=(DoomRunnerMod(path="Z:/doom/mods/brutal-doom/brutal-doom.pk3"),),
+                alternative_paths=DoomRunnerPresetPaths(
+                    config_dir="Z:/doom/configs/uzdoom/modern",
+                    save_dir="Z:/doom/saves/brutal_doom",
+                    screenshot_dir="Z:/doom/screenshots/brutal_doom",
+                ),
+                additional_args='-noautoload -config "Z:/doom/configs/uzdoom/modern/uzdoom.ini" +exec "Z:/doom/configs/uzdoom/modern/autoexec.cfg"',
+            ),
+        ),
+        selected_preset="Brutal Doom",
+        content_groups={"mods": []},
+        screen_width=1280,
+        screen_height=800,
+    )
+
+    serialized = options.as_json_object()
+    engines = cast(dict[str, Any], serialized["engines"])
+    engine_list = cast(list[dict[str, Any]], engines["engine_list"])
+    iwads = cast(dict[str, Any], serialized["IWADs"])
+    presets = cast(list[dict[str, Any]], serialized["presets"])
+    video_options = cast(dict[str, Any], serialized["video_options"])
+    options_storage = cast(dict[str, Any], serialized["options_storage"])
+
+    assert serialized["version"] == "1.9.2"
+    assert engine_list[0]["id"] == "doomdeck-uzdoom"
+    assert iwads["IWAD_list"] == [{"name": "Doom II: Hell on Earth", "path": "Z:/doom/iwads/DOOM2.WAD"}]
+    assert presets[0]["mods"] == [{"path": "Z:/doom/mods/brutal-doom/brutal-doom.pk3", "checked": True}]
+    assert serialized["selected_preset"] == "Brutal Doom"
+    assert serialized["content_groups"] == {"mods": []}
+    assert video_options["resolution_x"] == 1280
+    assert options_storage["compat_opts"] == 2
+
+
+def test_doomrunner_options_model_rejects_unknown_selected_preset() -> None:
+    with pytest.raises(DoomDeckError, match="Selected Doom Runner preset"):
+        DoomRunnerOptions(
+            version="1.9.2",
+            engine=DoomRunnerEngine(
+                id="doomdeck-uzdoom",
+                name="UZDoom",
+                path="Z:/doom/source-ports/uzdoom/uzdoom.exe",
+                config_dir="Z:/doom/configs/uzdoom",
+                data_dir="Z:/doom",
+                family="ZDoom",
+            ),
+            iwad_directory="Z:/doom/iwads",
+            default_iwad="Z:/doom/iwads/DOOM2.WAD",
+            iwads=(DoomRunnerIWAD(name="Doom II: Hell on Earth", path="Z:/doom/iwads/DOOM2.WAD"),),
+            maps_directory="Z:/doom/pwads",
+            mods_last_used_dir="Z:/doom/mods",
+            presets=(),
+            selected_preset="Missing",
+            screen_width=1280,
+            screen_height=800,
+        )
+
+
+def test_doomrunner_options_model_matches_existing_dict_builder(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.iwads.mkdir(parents=True)
+    dirs.brutal.mkdir(parents=True)
+    (dirs.iwads / "DOOM2.WAD").write_text("", encoding="utf-8")
+    (dirs.brutal / "brutal-doom.pk3").write_text("", encoding="utf-8")
+    manifest = {
+        "presets": [
+            {
+                "name": "Brutal Doom",
+                "iwad": str(dirs.iwads / "DOOM2.WAD"),
+                "files": [str(dirs.brutal / "brutal-doom.pk3")],
+                "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
+                "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
+            },
+        ],
+        "content_groups": {"mods": []},
+    }
+
+    model = build_doomrunner_options_model(dirs, manifest)
+
+    assert model.selected_preset == "Brutal Doom"
+    assert model.as_json_object() == build_doomrunner_options(dirs, manifest)
 
 
 def test_doomrunner_options_omit_modded_presets_without_installed_mod_files(tmp_path) -> None:
