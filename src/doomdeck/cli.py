@@ -307,11 +307,22 @@ def discover_steam(args: argparse.Namespace, logger: logging.Logger) -> SteamInf
     return SteamInfo(steam_root, user_id, shortcuts, libraries, app_install_dir)
 
 
-def copy_wads(wads: dict[str, Path], dest_dir: Path, backups_dir: Path, dry_run: bool, logger: logging.Logger, label: str) -> None:
+def copy_wads(
+    wads: dict[str, Path],
+    dest_dir: Path,
+    backups_dir: Path,
+    dry_run: bool,
+    logger: logging.Logger,
+    label: str,
+    overwrite_existing: bool = True,
+) -> None:
     for name, src in wads.items():
         dest = dest_dir / name.upper()
         if dest.exists() and files_equal(src, dest):
             logger.info("%s already copied: %s", label, dest)
+            continue
+        if dest.exists() and not overwrite_existing:
+            logger.warning("Preserving existing %s with same name; skipping copy from %s: %s", label, src, dest)
             continue
         if dest.exists():
             backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
@@ -326,7 +337,7 @@ def copy_iwads(iwads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: loggin
 
 
 def copy_addon_wads(wads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
-    copy_wads(wads, dirs.pwads, dirs.backups, dry_run, logger, "add-on WAD")
+    copy_wads(wads, dirs.pwads, dirs.backups, dry_run, logger, "add-on WAD", overwrite_existing=False)
 
 
 def github_request_json(url: str) -> Any:

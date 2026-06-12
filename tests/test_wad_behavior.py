@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 
+from doomdeck.cli import copy_addon_wads
 from doomdeck.application.wads import find_wads_in_install, score_iwad_candidate
+from doomdeck.domain.paths import build_dirs
 from doomdeck.domain.wads import iwad_dest_name
 
 
@@ -34,3 +36,18 @@ def test_wad_discovery_separates_iwads_from_addon_wads_and_skips_support_archive
 
     assert iwads == {"doom2.wad": (install_dir / "rerelease" / "base" / "doom2.wad").resolve()}
     assert pwads == {"sigil.wad": (install_dir / "mods" / "sigil.wad").resolve()}
+
+
+def test_copy_addon_wads_preserves_existing_custom_wad_with_same_name(tmp_path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    dirs.pwads.mkdir(parents=True)
+    steam_addon = tmp_path / "steam" / "mods" / "sigil.wad"
+    steam_addon.parent.mkdir(parents=True)
+    steam_addon.write_bytes(b"steam addon bytes")
+    existing_custom = dirs.pwads / "SIGIL.WAD"
+    existing_custom.write_bytes(b"user custom bytes")
+
+    copy_addon_wads({"sigil.wad": steam_addon}, dirs, dry_run=False, logger=logging.getLogger("test"))
+
+    assert existing_custom.read_bytes() == b"user custom bytes"
+    assert not any(dirs.backups.glob("SIGIL.WAD*"))
