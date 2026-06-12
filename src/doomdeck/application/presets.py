@@ -8,6 +8,7 @@ from typing import Any, Optional
 from doomdeck.application.content_groups import content_groups_from_manifest
 from doomdeck.domain.models import Dirs
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
+from doomdeck.domain.presets import EngineSpec, Preset, PresetManifest
 from doomdeck.domain.wads import DEFAULT_PRESET_IWADS, iwad_dest_name
 
 
@@ -19,79 +20,78 @@ def choose_default_preset_iwad(dirs: Dirs) -> Optional[Path]:
     return None
 
 
-def build_preset_manifest(dirs: Dirs, brutal_path: Optional[Path], project_brutality_path: Optional[Path]) -> dict[str, Any]:
-    presets: list[dict[str, Any]] = []
+def build_preset_manifest_model(dirs: Dirs, brutal_path: Optional[Path], project_brutality_path: Optional[Path]) -> PresetManifest:
+    presets: list[Preset] = []
     default_iwad = choose_default_preset_iwad(dirs)
     if default_iwad:
         presets.extend(
             [
-                {
-                    "name": "Vanilla Doom",
-                    "category": "Vanilla",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [],
-                    "config": str(dirs.uzdoom_config / "classic" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "classic" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Vanilla_Doom.sh"),
-                    "notes": "Classic-style UZDoom launch. Change the selected IWAD in Doom Runner to switch Doom, Doom II, TNT, or Plutonia.",
-                },
-                {
-                    "name": "UZDoom",
-                    "category": "UZDoom",
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "UZDoom.sh"),
-                    "notes": "UZDoom without gameplay mods. Change the selected IWAD in Doom Runner to switch base games.",
-                },
-                {
-                    "name": BRUTAL_DOOM_MOD.name,
-                    "category": BRUTAL_DOOM_MOD.name,
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [str(brutal_path or BRUTAL_DOOM_MOD.alias_path(dirs.brutal))],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Brutal_Doom.sh"),
-                    "missing_hint": "Rerun install to check ModDB, or use --brutal-doom-file/--brutal-doom-url.",
-                    "notes": f"Requires mods/brutal-doom/{BRUTAL_DOOM_MOD.alias}. Change the selected IWAD in Doom Runner to switch base games.",
-                },
-                {
-                    "name": PROJECT_BRUTALITY_MOD.name,
-                    "category": PROJECT_BRUTALITY_MOD.name,
-                    "engine": "UZDoom",
-                    "iwad": str(default_iwad),
-                    "files": [str(project_brutality_path or PROJECT_BRUTALITY_MOD.alias_path(dirs.project_brutality))],
-                    "config": str(dirs.uzdoom_config / "modern" / "uzdoom.ini"),
-                    "autoexec": str(dirs.uzdoom_config / "modern" / "autoexec.cfg"),
-                    "launcher": str(dirs.launchers / "Project_Brutality.sh"),
-                    "missing_hint": "Rerun install to download Project Brutality, or use --project-brutality-file /path/to/Project_Brutality.pk3.",
-                    "notes": "Downloads Project Brutality from GitHub and installs it as mods/project-brutality/project-brutality.pk3.",
-                },
+                Preset(
+                    name="Vanilla Doom",
+                    category="Vanilla",
+                    engine="UZDoom",
+                    iwad=default_iwad,
+                    config=dirs.uzdoom_config / "classic" / "uzdoom.ini",
+                    autoexec=dirs.uzdoom_config / "classic" / "autoexec.cfg",
+                    launcher=dirs.launchers / "Vanilla_Doom.sh",
+                    notes="Classic-style UZDoom launch. Change the selected IWAD in Doom Runner to switch Doom, Doom II, TNT, or Plutonia.",
+                ),
+                Preset(
+                    name="UZDoom",
+                    category="UZDoom",
+                    engine="UZDoom",
+                    iwad=default_iwad,
+                    config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
+                    autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
+                    launcher=dirs.launchers / "UZDoom.sh",
+                    notes="UZDoom without gameplay mods. Change the selected IWAD in Doom Runner to switch base games.",
+                ),
+                Preset(
+                    name=BRUTAL_DOOM_MOD.name,
+                    category=BRUTAL_DOOM_MOD.name,
+                    engine="UZDoom",
+                    iwad=default_iwad,
+                    files=(brutal_path or BRUTAL_DOOM_MOD.alias_path(dirs.brutal),),
+                    config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
+                    autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
+                    launcher=dirs.launchers / "Brutal_Doom.sh",
+                    missing_hint="Rerun install to check ModDB, or use --brutal-doom-file/--brutal-doom-url.",
+                    notes=f"Requires mods/brutal-doom/{BRUTAL_DOOM_MOD.alias}. Change the selected IWAD in Doom Runner to switch base games.",
+                ),
+                Preset(
+                    name=PROJECT_BRUTALITY_MOD.name,
+                    category=PROJECT_BRUTALITY_MOD.name,
+                    engine="UZDoom",
+                    iwad=default_iwad,
+                    files=(project_brutality_path or PROJECT_BRUTALITY_MOD.alias_path(dirs.project_brutality),),
+                    config=dirs.uzdoom_config / "modern" / "uzdoom.ini",
+                    autoexec=dirs.uzdoom_config / "modern" / "autoexec.cfg",
+                    launcher=dirs.launchers / "Project_Brutality.sh",
+                    missing_hint="Rerun install to download Project Brutality, or use --project-brutality-file /path/to/Project_Brutality.pk3.",
+                    notes="Downloads Project Brutality from GitHub and installs it as mods/project-brutality/project-brutality.pk3.",
+                ),
             ]
         )
-    manifest: dict[str, Any] = {
-        "schema": "doom-deck-setup/preset-manifest/v1",
-        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
-        "warning": "This is a stable manifest generated by DoomDeck. Doom Runner options.json copies are generated separately.",
-        "root": str(dirs.root),
-        "engine": {
-            "name": "UZDoom",
-            "executable": str(dirs.uzdoom / "uzdoom.exe"),
-            "family": "UZDoom/ZDoom",
-            "config_directory": str(dirs.uzdoom_config),
-            "data_directory": str(dirs.root),
+    manifest = PresetManifest(
+        generated_at=_dt.datetime.now().isoformat(timespec="seconds"),
+        root=dirs.root,
+        engine=EngineSpec(
+            name="UZDoom",
+            executable=dirs.uzdoom / "uzdoom.exe",
+            family="UZDoom/ZDoom",
+            config_directory=dirs.uzdoom_config,
+            data_directory=dirs.root,
+        ),
+        iwad_directory=dirs.iwads,
+        pwad_directory=dirs.pwads,
+        mod_directories={
+            "brutal_doom": dirs.brutal,
+            "project_brutality": dirs.project_brutality,
         },
-        "iwad_directory": str(dirs.iwads),
-        "pwad_directory": str(dirs.pwads),
-        "mod_directories": {
-            "brutal_doom": str(dirs.brutal),
-            "project_brutality": str(dirs.project_brutality),
-        },
-        "presets": presets,
-    }
-    manifest["content_groups"] = content_groups_from_manifest(dirs, manifest)
-    return manifest
+        presets=tuple(presets),
+    )
+    return manifest.with_content_groups(content_groups_from_manifest(dirs, manifest.as_json_object()))
+
+
+def build_preset_manifest(dirs: Dirs, brutal_path: Optional[Path], project_brutality_path: Optional[Path]) -> dict[str, Any]:
+    return build_preset_manifest_model(dirs, brutal_path, project_brutality_path).as_json_object()

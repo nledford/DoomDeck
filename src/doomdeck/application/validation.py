@@ -11,6 +11,7 @@ from doomdeck.application.proton import proton_linux_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
+from doomdeck.domain.presets import PresetManifest
 from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
 from doomdeck.infrastructure.archives import zip_contains_markers
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT
@@ -63,7 +64,7 @@ class InstallationValidator:
         self._validate_wads(items, dirs)
         self._validate_managed_mods(items, dirs)
         manifest = self._validate_preset_manifest(items, dirs)
-        if manifest:
+        if manifest is not None:
             self._validate_preset_references(items, manifest, dirs)
         self._validate_uzdoom_configs(items, dirs)
         self._validate_doomrunner_live_options(items, dirs)
@@ -162,26 +163,35 @@ class InstallationValidator:
         add_validation_item(items, "PASS", f"{label} is valid: {path}")
         return parsed
 
-    def _validate_preset_manifest(self, items: list[ValidationItem], dirs: Dirs) -> Optional[dict[str, Any]]:
+    def _validate_preset_manifest(self, items: list[ValidationItem], dirs: Dirs) -> Optional[PresetManifest]:
         manifest_path = dirs.doomrunner_config / "preset-manifest.json"
         if not manifest_path.exists():
             add_validation_item(items, "FAIL", f"Preset manifest missing: {manifest_path}")
             return None
-        return self._read_json_object_for_validation(items, manifest_path, "Preset manifest JSON")
+        parsed = self._read_json_object_for_validation(items, manifest_path, "Preset manifest JSON")
+        if parsed is None:
+            return None
+        try:
+            return PresetManifest.from_json_object(parsed)
+        except DoomDeckError as exc:
+            add_validation_item(items, "FAIL", f"Preset manifest structure is invalid: {manifest_path}: {exc}")
+            return None
 
-    def _validate_preset_references(self, items: list[ValidationItem], manifest: dict[str, Any], dirs: Dirs) -> None:
+    def _validate_preset_references(self, items: list[ValidationItem], manifest: PresetManifest, dirs: Dirs) -> None:
         manifest_path = dirs.doomrunner_config / "preset-manifest.json"
-        project_brutality_preset_ok = any(preset.get("name") == "Project Brutality" for preset in manifest.get("presets", []))
+        project_brutality_preset_ok = any(preset.name == "Project Brutality" for preset in manifest.presets)
         add_validation_item(items, "PASS" if project_brutality_preset_ok else "FAIL", f"Preset manifest includes Project Brutality preset: {manifest_path}")
-        for preset in manifest.get("presets", []):
-            name = preset.get("name", "<unnamed>")
-            for key in ["iwad", "config", "autoexec", "launcher"]:
-                p = Path(preset.get(key, ""))
-                add_validation_item(items, "PASS" if p.exists() else "FAIL", f"Preset {name} references existing {key}: {p}")
-            for file_name in preset.get("files", []):
-                p = Path(file_name)
+        for preset in manifest.presets:
+            for key, path in [
+                ("iwad", preset.iwad),
+                ("config", preset.config),
+                ("autoexec", preset.autoexec),
+                ("launcher", preset.launcher),
+            ]:
+                add_validation_item(items, "PASS" if path.exists() else "FAIL", f"Preset {preset.name} references existing {key}: {path}")
+            for p in preset.files:
                 level = "PASS" if p.exists() else "WARN"
-                add_validation_item(items, level, f"Preset {name} mod file reference: {p}")
+                add_validation_item(items, level, f"Preset {preset.name} mod file reference: {p}")
 
     def _validate_uzdoom_configs(self, items: list[ValidationItem], dirs: Dirs) -> None:
         for profile, back_binding in [("classic", "bind pad_b menu_back"), ("modern", "bind pad_b +deck_crouch_back")]:
