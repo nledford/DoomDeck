@@ -1127,7 +1127,7 @@ Doom Runner should open with the generated UZDoom engine, IWADs, and presets alr
 
    `{dirs.pwads}`
 
-   ModDB WAD archives installed with `--moddb-wad-url` are extracted here so they can be selected inside a preset.
+   ModDB WAD archives installed with `doomdeck install-wads` are extracted here so they can be selected inside a preset.
 
 5. Confirm these presets are listed:
 
@@ -1298,7 +1298,6 @@ def install(args: argparse.Namespace) -> int:
         steam=steam,
         appid=APPID_DOOM_PLUS_DOOM_II,
         steamos_msg=steamos_msg,
-        moddb_wad_urls=args.moddb_wad_urls,
         skip_steam_shortcut=args.skip_steam_shortcut,
     )
     print_plan("Planned install actions", plan.render_actions())
@@ -1340,19 +1339,6 @@ def install(args: argparse.Namespace) -> int:
     else:
         logger.warning("Steam app %s not found. Install DOOM + DOOM II in Steam, then rerun install.", APPID_DOOM_PLUS_DOOM_II)
 
-    moddb_wads = install_moddb_wad_urls(
-        args.moddb_wad_urls,
-        dirs.downloads,
-        dirs.pwads,
-        dirs.backups,
-        args.dry_run,
-        logger,
-        force_download=args.force_download,
-        user_agent=GITHUB_USER_AGENT,
-    )
-    if moddb_wads:
-        logger.info("Installed ModDB WAD payloads: %s", ", ".join(str(path) for path in moddb_wads))
-
     brutal_path = resolve_brutal_doom(args, dirs, args.dry_run, logger)
     if brutal_path:
         logger.info("Brutal Doom alias: %s", brutal_path)
@@ -1386,6 +1372,36 @@ def install(args: argparse.Namespace) -> int:
 
     report = validate_internal(args, dirs, steam, logger, print_report=True)
     return 1 if validation_has_failures(report) else 0
+
+
+def install_wads(args: argparse.Namespace) -> int:
+    dirs = build_dirs(expand_path(args.root))
+    logger = configure_logging(dirs, args.verbose, args.dry_run)
+    print_plan(
+        "Planned WAD install actions",
+        [
+            f"Create/update WAD directories under {dirs.root}",
+            "Download requested ModDB WAD archives into the PWAD map directory",
+        ],
+    )
+    for directory in [dirs.root, dirs.downloads, dirs.pwads, dirs.backups, dirs.logs]:
+        ensure_dir(directory, args.dry_run, logger)
+
+    moddb_wads = install_moddb_wad_urls(
+        args.moddb_wad_urls,
+        dirs.downloads,
+        dirs.pwads,
+        dirs.backups,
+        args.dry_run,
+        logger,
+        force_download=args.force_download,
+        user_agent=GITHUB_USER_AGENT,
+    )
+    if moddb_wads:
+        logger.info("Installed ModDB WAD payloads: %s", ", ".join(str(path) for path in moddb_wads))
+    else:
+        logger.info("No ModDB WAD payloads installed")
+    return 0
 
 
 def validate(args: argparse.Namespace) -> int:
@@ -1493,6 +1509,15 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging to console")
 
 
+def add_moddb_wad_url_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        dest="moddb_wad_urls",
+        metavar="moddb_url",
+        nargs="+",
+        help="ModDB add-on/file page URL to download and extract .wad/.pk3 map payloads into pwads/",
+    )
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Set up Doom Runner, UZDoom, IWADs, launchers, and Steam integration on Steam Deck.",
@@ -1517,13 +1542,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     install_parser.add_argument("--brutal-doom-file", help="Path to a manually downloaded Brutal Doom .pk3/.wad/.zip")
     install_parser.add_argument("--project-brutality-file", help="Path to a manually downloaded Project Brutality .pk3/.wad/.zip")
-    install_parser.add_argument(
-        "--moddb-wad-url",
-        action="append",
-        default=[],
-        dest="moddb_wad_urls",
-        help="ModDB add-on/file page to download and extract .wad/.pk3 map payloads into pwads/; repeat to install multiple archives",
-    )
     install_parser.add_argument("--skip-brutal-doom", action="store_true", help="Do not download, update, or install Brutal Doom")
     install_parser.add_argument("--skip-project-brutality", action="store_true", help="Do not download or install Project Brutality")
     install_parser.add_argument("--skip-steam-shortcut", action="store_true", help="Do not modify Steam shortcuts.vdf")
@@ -1536,6 +1554,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Deprecated compatibility flag; live Doom Runner options.json is now written by default",
     )
     install_parser.set_defaults(func=install)
+
+    install_wads_parser = subparsers.add_parser("install-wads", help="Install/update ModDB WAD archives only")
+    add_common_args(install_wads_parser)
+    install_wads_parser.add_argument("--force-download", action="store_true", help="Redownload WAD archives even if present in downloads/")
+    add_moddb_wad_url_args(install_wads_parser)
+    install_wads_parser.set_defaults(func=install_wads)
 
     validate_parser = subparsers.add_parser("validate", help="Validate the setup")
     add_common_args(validate_parser)

@@ -148,6 +148,7 @@ Available commands:
 | Command | What it does | When to use it |
 | --- | --- | --- |
 | `install` | Creates or updates the full DoomDeck setup. | Use this first. Rerun it when you want to update downloaded tools, mods, configs, or launchers. |
+| `install-wads` | Downloads ModDB WAD archives into the managed `pwads/` folder only. | Use this after the base install when you want to add or update map WADs without running the full installer. |
 | `validate` | Checks whether the setup looks complete and prints a pass/warn/fail report. | Use this after install, after moving files, or when something does not launch correctly. |
 | `backup` | Creates a `.tar.gz` backup of the managed Doom folder. | Use this before large manual changes or before experimenting. |
 | `clean` | Moves or deletes the managed Doom folder safely. | Use this when you want to remove the generated setup and start over. |
@@ -190,7 +191,6 @@ The `install` command creates the folder layout, installs tools, copies Doom fil
 | `--uzdoom-asset-url URL` | Uses a specific UZDoom AppImage URL instead of auto-selecting the latest GitHub release asset. | Use this if you need a specific UZDoom build. |
 | `--brutal-doom-url URL` | Downloads Brutal Doom from a specific `.pk3` or `.zip` URL. | Use this if ModDB auto-discovery fails or you want a known exact file. |
 | `--project-brutality-url URL` | Downloads Project Brutality from a specific `.pk3` or `.zip` URL. | Use this if GitHub auto-selection is not what you want. |
-| `--moddb-wad-url URL` | Downloads a ModDB add-on or file page and extracts `.wad` or `.pk3` map payloads into `pwads/`. Repeat it to install multiple archives. | Use this when you want a WAD such as Doom The Way id Did available inside Doom Runner's map selector without creating a new preset. |
 | `--prefer-legacy-appimage` | Prefers AppImage assets with `legacy` in the name when DoomDeck chooses from GitHub releases. | Use this if the normal AppImage does not run on your Steam Deck or Linux install. |
 | `--brutal-doom-channel latest` | Lets DoomDeck pick the newest Brutal Doom candidate it can find, including beta or test builds. This is the default. | Use this if you want the newest available Brutal Doom build. |
 | `--brutal-doom-channel stable` | Prefers non-beta Brutal Doom candidates. | Use this if you prefer a less experimental Brutal Doom version. |
@@ -219,16 +219,25 @@ doomdeck install --project-brutality-file ~/Downloads/Project_Brutality.pk3
 ```
 
 ```bash
-doomdeck install --moddb-wad-url https://www.moddb.com/games/doom/addons/doom-the-way-id-did-v11
-```
-
-```bash
 doomdeck install --skip-steam-shortcut
 ```
 
 ```bash
 doomdeck install --shutdown-steam
 ```
+
+## `install-wads` Options
+
+Install or update ModDB WAD archives without running the full install workflow:
+
+```bash
+doomdeck install-wads https://www.moddb.com/games/doom/addons/doom-the-way-id-did-v11
+```
+
+| Argument or option | What it means | When to use it |
+| --- | --- | --- |
+| `moddb_url` | ModDB add-on or file page URL to download and extract `.wad` or `.pk3` map payloads into `pwads/`. Pass multiple URLs to install multiple archives. | Use this when you want to add WADs after the base DoomDeck install. |
+| `--force-download` | Downloads WAD archives again, even if files already exist in `downloads/`. | Use this to refresh a cached archive or force an update from ModDB. |
 
 ## `validate` Options
 
@@ -373,13 +382,15 @@ Use `--project-brutality-file` if you already downloaded a file yourself.
 
 ### ModDB WAD Archives
 
-Use `--moddb-wad-url` with a ModDB add-on or file page to download a map archive and extract playable `.wad` or `.pk3` files into:
+Use `doomdeck install-wads` with one or more ModDB add-on or file page URLs to download map archives and extract playable `.wad` or `.pk3` files into:
 
 ```text
 pwads/
 ```
 
-DoomDeck does not create a preset for these downloads. Doom Runner already points its map directory at `pwads/`, so the extracted WAD can be selected inside an existing preset.
+`install-wads` is the targeted command for adding WADs after the base setup is complete. DoomDeck does not create a preset for these downloads. Doom Runner already points its map directory at `pwads/`, so the extracted WAD can be selected inside an existing preset.
+
+Rerunning the full installer preserves existing custom PWADs. If a Steam add-on WAD has the same destination name as a file already in `pwads/`, DoomDeck leaves the existing file in place.
 
 ## Safety Boundaries
 

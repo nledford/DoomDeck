@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Sequence
 
 from doomdeck.domain.models import Dirs, SteamInfo
 
@@ -28,7 +27,6 @@ def build_install_plan(
     steam: SteamInfo,
     appid: str,
     steamos_msg: str,
-    moddb_wad_urls: Sequence[str],
     skip_steam_shortcut: bool,
 ) -> InstallPlan:
     actions = [
@@ -47,8 +45,6 @@ def build_install_plan(
         InstallAction("project-brutality", "Check/update Project Brutality from GitHub and add a Doom Runner preset"),
         InstallAction("doomrunner-config", "Generate Doom Runner live options.json, setup guide, and stable preset manifest"),
     ]
-    if moddb_wad_urls:
-        actions.append(InstallAction("moddb-wads", "Download requested ModDB WAD archives into the PWAD map directory"))
     if not skip_steam_shortcut:
         actions.append(
             InstallAction(
@@ -65,7 +61,6 @@ def build_install_actions(
     steam: SteamInfo,
     appid: str,
     steamos_msg: str,
-    moddb_wad_urls: Sequence[str],
     skip_steam_shortcut: bool,
 ) -> list[str]:
     return build_install_plan(
@@ -73,7 +68,6 @@ def build_install_actions(
         steam=steam,
         appid=appid,
         steamos_msg=steamos_msg,
-        moddb_wad_urls=moddb_wad_urls,
         skip_steam_shortcut=skip_steam_shortcut,
     ).render_actions()
 

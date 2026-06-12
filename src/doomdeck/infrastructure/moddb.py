@@ -272,7 +272,7 @@ def select_brutal_doom_download(channel: str, logger: logging.Logger, user_agent
 def select_moddb_wad_download(page_url: str, logger: logging.Logger, user_agent: str = DEFAULT_USER_AGENT) -> ModDBDownload:
     parsed = urllib.parse.urlparse(page_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc.endswith("moddb.com"):
-        raise DoomDeckError(f"--moddb-wad-url must be a ModDB URL, got: {page_url}")
+        raise DoomDeckError(f"ModDB WAD URL must be a ModDB URL, got: {page_url}")
 
     try:
         page_html = fetch_text_url(page_url, logger, user_agent=user_agent)
