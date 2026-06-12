@@ -42,12 +42,11 @@ Install the latest source version directly from GitHub without PyPI:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/nledford/DoomDeck/master/install.sh | sh
-doomdeck install
 ```
 
-The installer downloads the GitHub source archive, stores it under `~/.local/share/doomdeck/source`, and creates a `doomdeck` command in `~/.local/bin`.
+The installer downloads the GitHub source archive, stores it under `~/.local/share/doomdeck/source`, and creates a `doomdeck` command in `~/.local/bin`. This only installs DoomDeck itself; run `doomdeck install` separately when you are ready to create or update the managed Doom setup.
 
-To update that installed DoomDeck command later:
+The command installed by this method includes the `self-update` subcommand. To update that installed DoomDeck command later:
 
 ```bash
 doomdeck self-update
