@@ -405,6 +405,22 @@ Full installs also include the same metadata in Doom Runner's generated live `op
 
 Grouping is automatic. DoomDeck prefers explicit metadata such as managed mod metadata and preset categories, then directory/package names, then conservative filename heuristics. Current groups include Brutal Doom forks, weapon mods, total conversions, Master Levels, map packs, mutators, textures, visors, music, and Other.
 
+Custom WADs can also have friendly display names without changing the actual WAD filename or path. DoomDeck resolves PWAD display names from optional user overrides, manifest metadata, a small curated list of well-known filenames such as `DTWID.wad`, and finally a conservative cleanup of separator-heavy filenames. The original path remains the selectable/launchable value.
+
+To override a WAD label, create `configs/doomrunner/wad-display-names.json`:
+
+```json
+{
+  "schema": "doom-deck-setup/wad-display-names/v1",
+  "display_names": {
+    "DTWID.wad": "Doom The Way ID Did",
+    "pwads/custom-map.wad": "My Custom Map"
+  }
+}
+```
+
+Keys may be a filename, a path relative to the managed root, a path relative to `pwads/`, or an absolute path. Values are display labels only; DoomDeck does not rename, move, or replace WAD files.
+
 Group headers are metadata only. They are not written as selectable WADs, mods, map packs, or launchable presets, so existing launch paths and preset references remain valid.
 
 ## Safety Boundaries
