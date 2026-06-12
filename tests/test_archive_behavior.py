@@ -146,6 +146,34 @@ def test_safe_tar_extraction_accepts_regular_backup_members(tmp_path) -> None:
     assert (restore_dir / "Doom" / "iwads" / "DOOM2.WAD").read_bytes() == b"iwad"
 
 
+def test_safe_tar_extraction_requires_expected_backup_root(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        payload = b"iwad"
+        member = tarfile.TarInfo("OtherRoot/iwads/DOOM2.WAD")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(DoomDeckError, match="Unexpected backup archive root"):
+            safe_extract_tar(archive, tmp_path / "restore", expected_root_name="Doom")
+
+
+def test_safe_tar_extraction_accepts_expected_backup_root(tmp_path) -> None:
+    archive_path = tmp_path / "backup.tar.gz"
+    restore_dir = tmp_path / "restore"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        payload = b"iwad"
+        member = tarfile.TarInfo("Doom/iwads/DOOM2.WAD")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        safe_extract_tar(archive, restore_dir, expected_root_name="Doom")
+
+    assert (restore_dir / "Doom" / "iwads" / "DOOM2.WAD").read_bytes() == b"iwad"
+
+
 def test_tree_backup_archive_excludes_nested_backup_directory(tmp_path) -> None:
     root = tmp_path / "Doom"
     backups = root / "backups"

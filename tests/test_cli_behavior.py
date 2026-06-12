@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import argparse
+import io
 import json
 import logging
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from doomdeck.cli import build_arg_parser, main, select_release_asset, select_windows_release_asset
+from doomdeck.cli import build_arg_parser, main, restore, select_release_asset, select_windows_release_asset
 from doomdeck.domain.models import DoomDeckError
 
 
@@ -106,6 +109,32 @@ class CLIBehaviorTests(unittest.TestCase):
 
     def test_top_level_help_mentions_install_wads_command(self) -> None:
         self.assertIn("install-wads", build_arg_parser().format_help())
+
+    def test_restore_rejects_wrong_backup_root_before_moving_existing_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "Doom"
+            root.mkdir()
+            marker = root / "existing.txt"
+            marker.write_text("keep", encoding="utf-8")
+            archive_path = Path(temp_dir) / "wrong-root.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                payload = b"wrong"
+                member = tarfile.TarInfo("OtherRoot/file.txt")
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+
+            args = argparse.Namespace(root=str(root), backup_archive=str(archive_path), verbose=False, dry_run=False)
+
+            with (
+                patch("doomdeck.cli.configure_logging", return_value=logging.getLogger("test")),
+                patch("doomdeck.cli.print_plan"),
+                self.assertRaisesRegex(DoomDeckError, "Unexpected backup archive root"),
+            ):
+                restore(args)
+
+            self.assertTrue(root.is_dir())
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+            self.assertEqual(list(root.parent.glob("Doom.pre-restore-*")), [])
 
     def test_self_update_parser_accepts_check_and_ref_options(self) -> None:
         args = build_arg_parser().parse_args(

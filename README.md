@@ -357,7 +357,7 @@ Basic restore:
 doomdeck restore /path/to/backup.tar.gz
 ```
 
-`restore` extracts a backup archive under the managed folder's parent directory. If the managed folder already exists, it moves the current folder aside first using a timestamped name like:
+`restore` extracts a backup archive under the managed folder's parent directory. The archive must contain the selected managed root folder name, such as `Doom/`, at its top level. If the managed folder already exists, DoomDeck validates the archive first, then moves the current folder aside using a timestamped name like:
 
 ```text
 $HOME/Games/Doom.pre-restore-YYYYMMDD-HHMMSS
@@ -468,7 +468,7 @@ DoomDeck downloads executable tools and mod archives only over HTTPS. For automa
 
 Explicit `--brutal-doom-url`, `--project-brutality-url`, `--doomrunner-asset-url`, and `--uzdoom-asset-url` values are still accepted, but they must use HTTPS. Prefer local file options when you need to install an artifact from another source you already inspected.
 
-Restore archives are intentionally strict. `doomdeck restore` only restores regular files and directories whose archive paths stay under the selected managed root parent. It rejects absolute paths, path traversal, links, and special file entries even if an older archive extractor would have accepted them.
+Restore archives are intentionally strict. `doomdeck restore` only restores regular files and directories whose archive paths stay under the selected managed root parent and start with the selected managed root folder name. It rejects absolute paths, path traversal, links, special file entries, and archives with an unexpected top-level folder even if an older archive extractor would have accepted them.
 
 ## Troubleshooting
 

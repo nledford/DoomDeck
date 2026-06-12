@@ -126,23 +126,22 @@ def write_tree_tar_gz(
             archive.add(item, arcname=item.relative_to(root.parent), recursive=False)
 
 
-def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
-    dest = dest.resolve()
-    validated: list[tuple[tarfile.TarInfo, Path]] = []
-    for member in tar.getmembers():
-        parts = PurePosixPath(member.name).parts
-        if PurePosixPath(member.name).is_absolute():
-            raise DoomDeckError(f"Unsafe absolute path in tar archive: {member.name}")
-        if not parts or any(part in {"", ".", ".."} for part in parts):
-            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
-        member_path = dest.joinpath(*parts).resolve()
-        if not path_is_or_is_under(member_path, dest):
-            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
-        if member.issym() or member.islnk():
-            raise DoomDeckError(f"Unsafe link in tar archive: {member.name}")
-        if not member.isfile() and not member.isdir():
-            raise DoomDeckError(f"Unsafe special file in tar archive: {member.name}")
-        validated.append((member, member_path))
+def validate_safe_tar(
+    tar: tarfile.TarFile,
+    dest: Path,
+    *,
+    expected_root_name: str | None = None,
+) -> None:
+    _validated_tar_members(tar, dest, expected_root_name=expected_root_name)
+
+
+def safe_extract_tar(
+    tar: tarfile.TarFile,
+    dest: Path,
+    *,
+    expected_root_name: str | None = None,
+) -> None:
+    validated = _validated_tar_members(tar, dest, expected_root_name=expected_root_name)
 
     for member, member_path in validated:
         if member.isdir():
@@ -155,3 +154,30 @@ def safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
         with source, member_path.open("wb") as dest_handle:
             shutil.copyfileobj(source, dest_handle)
         os.chmod(member_path, member.mode & 0o755)
+
+
+def _validated_tar_members(
+    tar: tarfile.TarFile,
+    dest: Path,
+    *,
+    expected_root_name: str | None = None,
+) -> list[tuple[tarfile.TarInfo, Path]]:
+    dest = dest.resolve()
+    validated: list[tuple[tarfile.TarInfo, Path]] = []
+    for member in tar.getmembers():
+        parts = PurePosixPath(member.name).parts
+        if PurePosixPath(member.name).is_absolute():
+            raise DoomDeckError(f"Unsafe absolute path in tar archive: {member.name}")
+        if not parts or any(part in {"", ".", ".."} for part in parts):
+            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
+        if expected_root_name is not None and parts[0] != expected_root_name:
+            raise DoomDeckError(f"Unexpected backup archive root in tar archive: {member.name}; expected {expected_root_name}")
+        member_path = dest.joinpath(*parts).resolve()
+        if not path_is_or_is_under(member_path, dest):
+            raise DoomDeckError(f"Unsafe path in tar archive: {member.name}")
+        if member.issym() or member.islnk():
+            raise DoomDeckError(f"Unsafe link in tar archive: {member.name}")
+        if not member.isfile() and not member.isdir():
+            raise DoomDeckError(f"Unsafe special file in tar archive: {member.name}")
+        validated.append((member, member_path))
+    return validated

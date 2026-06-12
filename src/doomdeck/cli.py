@@ -87,6 +87,7 @@ from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
 from doomdeck.infrastructure.archives import (
     safe_extract_tar,
     safe_extract_zip,
+    validate_safe_tar,
     write_tree_tar_gz,
 )
 from doomdeck.infrastructure.downloads import download_url as _download_url
@@ -996,10 +997,12 @@ def restore(args: argparse.Namespace) -> int:
     print_plan("Planned restore actions", actions)
     if args.dry_run:
         return 0
+    with tarfile.open(archive, "r:gz") as tar:
+        validate_safe_tar(tar, dirs.root.parent, expected_root_name=dirs.root.name)
     if dirs.root.exists():
         shutil.move(str(dirs.root), str(replaced))
     with tarfile.open(archive, "r:gz") as tar:
-        safe_extract_tar(tar, dirs.root.parent)
+        safe_extract_tar(tar, dirs.root.parent, expected_root_name=dirs.root.name)
     logger.info("Restore completed from %s", archive)
     return 0
 
