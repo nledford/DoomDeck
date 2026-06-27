@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import shlex
@@ -15,6 +16,7 @@ from doomdeck.application.doomrunner import build_doomrunner_options, doomrunner
 from doomdeck.application.launchers import write_launchers_and_manifest
 from doomdeck.application.moddb_wads import install_moddb_wad_archive
 from doomdeck.application.proton import proton_linux_path
+from doomdeck.application.steam_input import steam_input_profile_path
 from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.domain.paths import all_managed_dirs, build_dirs
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT, BinaryVDF
@@ -163,6 +165,19 @@ def user_runs_doomdeck_install_again(bdd_context: dict[str, Any]) -> None:
 @then("Steam still has exactly one Doom Runner shortcut")
 def steam_has_one_doomrunner_shortcut(bdd_context: dict[str, Any]) -> None:
     assert _shortcut_names(bdd_context).count("Doom Runner") == 1
+
+
+@then("Steam has a DoomDeck Steam Input profile for the Doom Runner shortcut")
+def steam_has_doomdeck_steam_input_profile(bdd_context: dict[str, Any]) -> None:
+    steam = cli.discover_steam(
+        argparse.Namespace(steam_root=str(bdd_context["steam_root"]), steam_user_id="123"),
+        LOGGER,
+    )
+    profile_path = steam_input_profile_path(steam)
+    assert profile_path is not None
+    text = profile_path.read_text(encoding="utf-8")
+    assert "DoomDeck Hybrid KB/M" in text
+    assert "gyro active" not in text.lower()
 
 
 @then("no DoomDeck preset shortcuts remain")

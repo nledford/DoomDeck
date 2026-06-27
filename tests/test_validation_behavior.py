@@ -10,6 +10,7 @@ import pytest
 
 from doomdeck.application.doomrunner import DoomRunnerLiveConfigSettings, doomrunner_options_paths, write_doomrunner_live_config
 from doomdeck.application.launchers import write_launchers_and_manifest
+from doomdeck.application.steam_input import write_managed_steam_input_profile
 from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.application.validation import (
     InstallationValidator,
@@ -130,18 +131,19 @@ def test_validation_reports_malformed_preset_manifest_without_crashing(tmp_path:
     assert any("Preset manifest presets must be a list" in failure for failure in failures)
 
 
-def test_uzdoom_configs_bind_quicksave_and_quickload_keys(tmp_path: Path) -> None:
+def test_uzdoom_configs_bind_quicksave_keys_without_direct_stick_click_quickload(tmp_path: Path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     logger = logging.getLogger("test")
 
     write_uzdoom_configs(dirs, dry_run=False, logger=logger)
 
-    for profile in ["classic", "modern"]:
+    for profile in ["classic", "modern", "brutal", "project-brutality"]:
         autoexec = (dirs.uzdoom_config / profile / "autoexec.cfg").read_text(encoding="utf-8").lower()
         assert "bind f6 quicksave" in autoexec
         assert "bind f9 quickload" in autoexec
-        assert "bind pad_lthumb quicksave" in autoexec
-        assert "bind pad_rthumb quickload" in autoexec
+        assert "bind pad_lthumb quicksave" not in autoexec
+        assert "bind pad_rthumb quickload" not in autoexec
+        assert "bind e +deck_use_select" in autoexec
 
 
 def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,6 +166,7 @@ def test_validation_accepts_a_generated_managed_setup(tmp_path: Path, monkeypatc
     (dirs.backups / "existing-backup").write_text("", encoding="utf-8")
 
     write_uzdoom_configs(dirs, dry_run=False, logger=logger)
+    write_managed_steam_input_profile(dirs, dry_run=False, logger=logger)
     manifest = write_launchers_and_manifest(
         dirs,
         dirs.brutal / "brutal-doom.pk3",
@@ -200,6 +203,7 @@ def test_validation_fails_generated_preset_that_references_missing_mod_file(tmp_
     (dirs.uzdoom / "uzdoom.exe").write_bytes(b"exe")
     (dirs.iwads / "DOOM2.WAD").write_bytes(b"iwad")
     write_uzdoom_configs(dirs, dry_run=False, logger=logger)
+    write_managed_steam_input_profile(dirs, dry_run=False, logger=logger)
     manifest = {
         "schema": "doom-deck-setup/preset-manifest/v1",
         "generated_at": "2026-06-12T12:00:00",

@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable, Optional, cast
 from doomdeck.application.doomrunner import doomrunner_options_paths
 from doomdeck.application.doomrunner_validation import inspect_doomrunner_options
 from doomdeck.application.steam import doomrunner_proton_options_path
+from doomdeck.application.steam_input import managed_steam_input_profile_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
@@ -68,6 +69,7 @@ class InstallationValidator:
         if manifest is not None:
             self._validate_preset_references(items, manifest, dirs)
         self._validate_uzdoom_configs(items, dirs)
+        self._validate_steam_input_profile(items, dirs)
         self._validate_doomrunner_live_options(items, dirs)
         self._validate_shell_scripts(items, dirs)
         self._validate_steam(items, dirs, steam)
@@ -217,7 +219,13 @@ class InstallationValidator:
             add_validation_item(items, "WARN", f"Optional {preset_name} preset omitted because mod alias is missing: {mod_alias}")
 
     def _validate_uzdoom_configs(self, items: list[ValidationItem], dirs: Dirs) -> None:
-        for profile, back_binding in [("classic", "bind pad_b menu_back"), ("modern", "bind pad_b +deck_crouch_back")]:
+        profiles = [
+            ("classic", "bind leftctrl +deck_menu_back", "bind space +deck_use_select"),
+            ("modern", "bind leftctrl +deck_crouch_back", "bind space +jump"),
+            ("brutal", "bind leftctrl +deck_crouch_back", "bind space +jump"),
+            ("project-brutality", "bind leftctrl +deck_crouch_back", "bind space +jump"),
+        ]
+        for profile, back_binding, jump_or_use_binding in profiles:
             autoexec_path = dirs.uzdoom_config / profile / "autoexec.cfg"
             if autoexec_path.exists():
                 text = autoexec_path.read_text(encoding="utf-8").lower()
@@ -225,16 +233,21 @@ class InstallationValidator:
                     needle in text
                     for needle in [
                         "use_joystick true",
-                        "bind pad_a +deck_use_select",
+                        "bind e +deck_use_select",
+                        'bind capslock "toggle cl_run"',
+                        jump_or_use_binding,
                         back_binding,
-                        "bind pad_start menu_main",
                         "bind f6 quicksave",
                         "bind f9 quickload",
-                        "bind pad_lthumb quicksave",
-                        "bind pad_rthumb quickload",
+                        "bind mouse1 +attack",
+                        "bind mouse2 +altattack",
+                        "bind mwheelup weapnext",
+                        "bind mwheeldown weapprev",
                     ]
                 )
-                add_validation_item(items, "PASS" if controller_ok else "FAIL", f"{profile} UZDoom Steam Deck controller bindings: {autoexec_path}")
+                no_direct_gamepad_quickload = "pad_rthumb quickload" not in text and "pad_lthumb quicksave" not in text
+                add_validation_item(items, "PASS" if controller_ok else "FAIL", f"{profile} UZDoom Steam Deck keyboard/mouse bindings: {autoexec_path}")
+                add_validation_item(items, "PASS" if no_direct_gamepad_quickload else "FAIL", f"{profile} UZDoom avoids unsafe direct stick-click quick load: {autoexec_path}")
             else:
                 add_validation_item(items, "FAIL", f"{profile} UZDoom autoexec missing: {autoexec_path}")
 
@@ -253,6 +266,39 @@ class InstallationValidator:
                 add_validation_item(items, "PASS" if display_ok else "FAIL", f"{profile} UZDoom Steam Deck display settings: {ini_path}")
             else:
                 add_validation_item(items, "FAIL", f"{profile} UZDoom ini missing: {ini_path}")
+
+    def _validate_steam_input_profile(self, items: list[ValidationItem], dirs: Dirs) -> None:
+        path = managed_steam_input_profile_path(dirs)
+        if not path.exists():
+            add_validation_item(items, "FAIL", f"DoomDeck Steam Input profile missing: {path}")
+            return
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        lower = text.lower()
+        core_bindings_ok = all(
+            needle in text
+            for needle in [
+                '"controller_type"\t\t"controller_neptune"',
+                "DoomDeck Hybrid KB/M",
+                "key_press W",
+                "key_press CAPSLOCK",
+                "key_press E",
+                "mouse_button LEFT",
+                "mouse_button RIGHT",
+                "mouse_wheel SCROLL_UP",
+                "mouse_wheel SCROLL_DOWN",
+                "key_press F6",
+                "key_press F9",
+                '"button_back_left_upper"',
+                '"button_back_right_upper"',
+                '"button_back_left"',
+                '"button_back_right"',
+            ]
+        )
+        gyro_disabled = "gyro active" not in lower and '"gyro"' not in lower
+        quickload_safe = '"button_back_right"' in text and '"Long_Press"' in text and '"long_press_time"\t\t"1500"' in text
+        add_validation_item(items, "PASS" if core_bindings_ok else "FAIL", f"DoomDeck Steam Input keyboard/mouse bindings: {path}")
+        add_validation_item(items, "PASS" if gyro_disabled else "FAIL", f"DoomDeck Steam Input gyro is disabled: {path}")
+        add_validation_item(items, "PASS" if quickload_safe else "FAIL", f"DoomDeck Steam Input quick load requires long press: {path}")
 
     def _validate_doomrunner_live_options(self, items: list[ValidationItem], dirs: Dirs) -> None:
         live_options_path = doomrunner_options_paths(dirs)[0]

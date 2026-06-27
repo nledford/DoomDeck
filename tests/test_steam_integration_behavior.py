@@ -12,6 +12,7 @@ from doomdeck.application.doomrunner import DoomRunnerLiveConfigSettings, doomru
 from doomdeck.application.launchers import write_launchers_and_manifest
 from doomdeck.application.steam import SteamShortcutSettings, add_or_update_doomrunner_shortcut, add_or_update_steam_shortcut
 from doomdeck.application.steam import doomrunner_proton_options_path
+from doomdeck.application.steam_input import deploy_steam_input_profile, steam_input_profile_path, write_managed_steam_input_profile
 from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.application.proton import proton_linux_path
 from doomdeck.domain.models import DoomDeckError, SteamInfo
@@ -134,12 +135,14 @@ def test_simulated_post_run_flow_writes_single_shortcut_and_launchable_doomrunne
     project_brutality.write_bytes(b"project-brutality")
 
     write_uzdoom_configs(dirs, dry_run=False, logger=logger)
+    write_managed_steam_input_profile(dirs, dry_run=False, logger=logger)
     manifest = write_launchers_and_manifest(dirs, brutal, project_brutality, dry_run=False, logger=logger)
     settings = SteamShortcutSettings(dry_run=False, proton_compat_tool="proton_10")
     first_appid = add_or_update_doomrunner_shortcut(shortcuts_path, dirs, settings, logger, process_detector=lambda _patterns: False)
     second_appid = add_or_update_doomrunner_shortcut(shortcuts_path, dirs, settings, logger, process_detector=lambda _patterns: False)
     proton_options = doomrunner_proton_options_path(steam, second_appid)
     assert proton_options is not None
+    deploy_steam_input_profile(dirs, steam, second_appid, dry_run=False, logger=logger)
     write_doomrunner_live_config(
         dirs,
         manifest,
@@ -167,6 +170,8 @@ def test_simulated_post_run_flow_writes_single_shortcut_and_launchable_doomrunne
     assert proton_linux_path(brutal_preset["selected_IWAD"]) == dirs.iwads / "DOOM2.WAD"
     assert [proton_linux_path(mod["path"]) for mod in brutal_preset["mods"] if mod["checked"]] == [brutal]
     additional_args = shlex.split(brutal_preset["additional_args"])
-    assert proton_linux_path(additional_args[additional_args.index("-config") + 1]) == dirs.uzdoom_config / "modern" / "uzdoom.ini"
-    assert proton_linux_path(additional_args[additional_args.index("+exec") + 1]) == dirs.uzdoom_config / "modern" / "autoexec.cfg"
+    assert proton_linux_path(additional_args[additional_args.index("-config") + 1]) == dirs.uzdoom_config / "brutal" / "uzdoom.ini"
+    assert proton_linux_path(additional_args[additional_args.index("+exec") + 1]) == dirs.uzdoom_config / "brutal" / "autoexec.cfg"
     assert "-savedir" not in brutal_preset["additional_args"]
+    deployed_profile = steam_input_profile_path(steam)
+    assert deployed_profile is not None and deployed_profile.exists()

@@ -70,5 +70,7 @@ def test_preset_manifest_uses_managed_mod_identities(tmp_path) -> None:
 
     presets = {preset["name"]: preset for preset in manifest["presets"]}
     assert presets["Brutal Doom"]["files"] == [str(dirs.brutal / "brutal-doom.pk3")]
+    assert presets["Brutal Doom"]["autoexec"] == str(dirs.uzdoom_config / "brutal" / "autoexec.cfg")
     assert presets["Project Brutality"]["files"] == [str(dirs.project_brutality / "project-brutality.pk3")]
+    assert presets["Project Brutality"]["autoexec"] == str(dirs.uzdoom_config / "project-brutality" / "autoexec.cfg")
     assert manifest["schema"] == "doom-deck-setup/preset-manifest/v1"

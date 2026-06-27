@@ -28,6 +28,7 @@ class Dirs:
     xdg_data: Path
     doomrunner_config: Path
     uzdoom_config: Path
+    steam_input_config: Path
     launchers: Path
     saves: Path
     screenshots: Path

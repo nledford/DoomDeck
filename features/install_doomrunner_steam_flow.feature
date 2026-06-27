@@ -5,6 +5,7 @@ Feature: Install a playable DoomRunner Steam shortcut
     And DoomDeck can install DoomRunner, UZDoom, an IWAD, and Brutal Doom
     When the user runs DoomDeck install
     Then Steam has exactly one Doom Runner shortcut
+    And Steam has a DoomDeck Steam Input profile for the Doom Runner shortcut
     And DoomRunner has a UZDoom engine configured
     And DoomRunner has a Brutal Doom preset with an existing IWAD and mod file
     And the preset launch paths resolve to existing files

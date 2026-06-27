@@ -18,6 +18,7 @@ class ProjectLayoutBehaviorTests(unittest.TestCase):
         self.assertEqual(dirs.brutal, root / "mods" / "brutal-doom")
         self.assertEqual(dirs.project_brutality, root / "mods" / "project-brutality")
         self.assertEqual(dirs.xdg_config, root / "configs" / "xdg-config")
+        self.assertEqual(dirs.steam_input_config, root / "configs" / "steam-input")
         self.assertEqual(dirs.docs, root / "docs")
 
     def test_all_managed_dirs_lists_unique_directories_with_root_first(self) -> None:
@@ -29,6 +30,7 @@ class ProjectLayoutBehaviorTests(unittest.TestCase):
         self.assertEqual(len(managed_dirs), len(set(managed_dirs)))
         self.assertIn(dirs.downloads, managed_dirs)
         self.assertIn(dirs.backups, managed_dirs)
+        self.assertIn(dirs.steam_input_config, managed_dirs)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,7 @@ from doomdeck.application.steam import (
     add_or_update_doomrunner_shortcut,
     doomrunner_proton_options_path,
 )
+from doomdeck.application.steam_input import deploy_steam_input_profile, write_managed_steam_input_profile
 from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.application.validation import InstallationValidator, format_validation_report, validation_has_failures
 from doomdeck.application.wads import find_wads_in_install
@@ -796,6 +797,7 @@ def install(args: argparse.Namespace) -> int:
         explicit_url=args.uzdoom_asset_url,
     )
     write_uzdoom_configs(dirs, args.dry_run, logger)
+    write_managed_steam_input_profile(dirs, args.dry_run, logger)
 
     if steam.app_install_dir:
         iwads, addon_wads = find_wads_in_install(steam.app_install_dir, logger)
@@ -855,6 +857,7 @@ def install(args: argparse.Namespace) -> int:
         proton_options = doomrunner_proton_options_path(steam, doomrunner_appid)
         if proton_options:
             extra_doomrunner_options_paths.append(proton_options)
+        deploy_steam_input_profile(dirs, steam, doomrunner_appid, args.dry_run, logger)
         logger.info("Restart Steam before expecting the non-Steam shortcut to appear in Gaming Mode")
 
     write_doomrunner_live_config(

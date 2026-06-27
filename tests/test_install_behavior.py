@@ -48,6 +48,7 @@ def test_install_plan_preserves_rendered_action_contract(tmp_path) -> None:
         "uzdoom-windows",
         "steam-wads",
         "uzdoom-launchers",
+        "steam-input-profile",
         "brutal-doom",
         "project-brutality",
         "doomrunner-config",
