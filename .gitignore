@@ -7,5 +7,6 @@ dist/
 __pycache__/
 *.py[cod]
 .idea/
+.cortexkit/
 .serena/
 .weave/
