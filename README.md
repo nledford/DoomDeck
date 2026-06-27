@@ -16,8 +16,8 @@ In plain terms, it:
 - Downloads or installs Project Brutality.
 - Creates ready-to-use Doom Runner presets.
 - Creates exactly one Steam shortcut for Doom Runner, with all generated presets available inside Doom Runner.
-- Writes Steam Deck-friendly UZDoom controller, display, graphics, quick save, and quick load settings.
-- Forces the generated Doom Runner shortcut to use Steam Proton by default, so Steam Input can expose Deck, Xbox, PlayStation, and other supported controllers to UZDoom as gamepads.
+- Writes Steam Deck-friendly UZDoom keyboard/mouse control, display, graphics, quick save, and safe quick load settings.
+- Forces the generated Doom Runner shortcut to use Steam Proton by default and installs a DoomDeck Steam Input profile that maps Steam Deck controls to keyboard and mouse input.
 - Backs up files before replacing important generated files or modifying Steam shortcut/config files.
 
 The tool is designed to be rerun. If you already ran it once, running it again updates the setup and reuses files that are already current.
