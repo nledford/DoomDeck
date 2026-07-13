@@ -2,9 +2,44 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 
 from doomdeck.domain.models import DoomDeckError, GitHubAsset
-from doomdeck.infrastructure.github_api import GitHubReleaseAssetPayload, GitHubReleasePayload
+from doomdeck.infrastructure.github_api import (
+    GitHubReleaseAssetPayload,
+    GitHubReleasePayload,
+    request_github_json,
+    validate_github_release_payload,
+)
+
+
+def fetch_linux_release_asset(
+    repo: str,
+    prefer_legacy_appimage: bool,
+    logger: logging.Logger,
+    user_agent: str,
+) -> GitHubAsset:
+    release = validate_github_release_payload(
+        request_github_json(f"https://api.github.com/repos/{repo}/releases/latest", user_agent),
+        repo,
+    )
+    selected = select_linux_appimage_release_asset(
+        release,
+        repo,
+        prefer_legacy_appimage=prefer_legacy_appimage,
+    )
+    logger.info("Selected GitHub asset for %s: %s", repo, selected.name)
+    return selected
+
+
+def fetch_windows_release_asset(repo: str, logger: logging.Logger, user_agent: str) -> GitHubAsset:
+    release = validate_github_release_payload(
+        request_github_json(f"https://api.github.com/repos/{repo}/releases/latest", user_agent),
+        repo,
+    )
+    selected = select_windows_zip_release_asset(release, repo)
+    logger.info("Selected Windows GitHub asset for %s: %s", repo, selected.name)
+    return selected
 
 
 def select_linux_appimage_release_asset(
@@ -55,6 +90,7 @@ def _select_release_asset(
         url=chosen.browser_download_url,
         size=chosen.size,
         tag_name=str(tag_name),
+        sha256=chosen.digest.removeprefix("sha256:") if chosen.digest else None,
     )
 
 

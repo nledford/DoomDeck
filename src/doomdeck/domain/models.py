@@ -54,6 +54,7 @@ class GitHubAsset:
     url: str
     size: Optional[int]
     tag_name: str
+    sha256: Optional[str] = None
 
 
 @dataclasses.dataclass

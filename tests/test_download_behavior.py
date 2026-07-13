@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import http.client
 import logging
 import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,26 +12,39 @@ from unittest.mock import patch
 
 import pytest
 
-from doomdeck.cli import download_url, github_request_json
+from doomdeck.cli import download_url
+from doomdeck.domain.downloads import DownloadPolicy
 from doomdeck.domain.models import DoomDeckError
+from doomdeck.infrastructure.downloads import ValidatingRedirectHandler
+from doomdeck.infrastructure.github_api import request_github_json
 from doomdeck.infrastructure.moddb import fetch_text_url
 
 
 @dataclass
 class FakeResponse:
     payload: bytes
+    url: str = "https://example.test/file.pk3"
 
-    def __enter__(self) -> io.BytesIO:
-        return io.BytesIO(self.payload)
+    def __post_init__(self) -> None:
+        self._stream = io.BytesIO(self.payload)
+
+    def __enter__(self) -> "FakeResponse":
+        return self
 
     def __exit__(self, *_exc: Any) -> None:
         return None
 
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
 
-def fake_urlopen(payload: bytes) -> Any:
-    def open_request(_request: object, timeout: int) -> FakeResponse:
+    def geturl(self) -> str:
+        return self.url
+
+
+def fake_urlopen(payload: bytes, final_url: str = "https://example.test/file.pk3") -> Any:
+    def open_request(_request: object, _policy: DownloadPolicy, timeout: int) -> FakeResponse:
         assert timeout == 60
-        return FakeResponse(payload)
+        return FakeResponse(payload, final_url)
 
     return open_request
 
@@ -38,6 +53,7 @@ def fake_urlopen(payload: bytes) -> Any:
 class FakeHeaderResponse:
     payload: bytes
     headers: dict[str, str]
+    url: str = "https://example.test/file.pk3"
 
     def __post_init__(self) -> None:
         self._stream = io.BytesIO(self.payload)
@@ -51,9 +67,12 @@ class FakeHeaderResponse:
     def read(self, size: int = -1) -> bytes:
         return self._stream.read(size)
 
+    def geturl(self) -> str:
+        return self.url
+
 
 def fake_header_urlopen(payload: bytes, headers: dict[str, str]) -> Any:
-    def open_request(_request: object, timeout: int) -> FakeHeaderResponse:
+    def open_request(_request: object, _policy: DownloadPolicy, timeout: int) -> FakeHeaderResponse:
         assert timeout == 60
         return FakeHeaderResponse(payload, headers)
 
@@ -82,10 +101,44 @@ def test_download_url_rejects_untrusted_hosts(tmp_path: Path) -> None:
         )
 
 
+def test_download_url_rejects_redirects_to_untrusted_hosts(tmp_path: Path) -> None:
+    dest = tmp_path / "file.pk3"
+
+    with patch(
+        "doomdeck.infrastructure.downloads._open_url",
+        side_effect=fake_urlopen(b"downloaded bytes", "https://redirected.invalid/file.pk3"),
+    ):
+        with pytest.raises(DoomDeckError, match="not allowed"):
+            download_url(
+                "https://example.test/file.pk3",
+                dest,
+                dry_run=False,
+                logger=logging.getLogger("test"),
+                allowed_hosts={"example.test"},
+            )
+
+    assert not dest.exists()
+    assert not (tmp_path / "file.pk3.tmp").exists()
+
+
+def test_redirect_handler_rejects_each_untrusted_target() -> None:
+    handler = ValidatingRedirectHandler(DownloadPolicy.for_hosts({"example.test"}))
+
+    with pytest.raises(DoomDeckError, match="not allowed"):
+        handler.redirect_request(
+            urllib.request.Request("https://example.test/file.pk3"),
+            io.BytesIO(),
+            302,
+            "Found",
+            http.client.HTTPMessage(),
+            "https://redirected.invalid/file.pk3",
+        )
+
+
 def test_download_url_verifies_size_and_sha256(tmp_path: Path) -> None:
     payload = b"downloaded bytes"
 
-    with patch("doomdeck.infrastructure.downloads.urllib.request.urlopen", side_effect=fake_urlopen(payload)):
+    with patch("doomdeck.infrastructure.downloads._open_url", side_effect=fake_urlopen(payload)):
         downloaded = download_url(
             "https://example.test/file.pk3",
             tmp_path / "file.pk3",
@@ -103,7 +156,7 @@ def test_download_url_rejects_oversized_content_length_before_copying(tmp_path: 
     dest = tmp_path / "file.pk3"
 
     with patch(
-        "doomdeck.infrastructure.downloads.urllib.request.urlopen",
+        "doomdeck.infrastructure.downloads._open_url",
         side_effect=fake_header_urlopen(b"downloaded bytes", {"Content-Length": "16"}),
     ):
         with pytest.raises(DoomDeckError, match="exceeds maximum allowed size"):
@@ -123,7 +176,7 @@ def test_download_url_rejects_oversized_content_length_before_copying(tmp_path: 
 def test_download_url_aborts_streams_that_exceed_expected_size(tmp_path: Path) -> None:
     dest = tmp_path / "file.pk3"
 
-    with patch("doomdeck.infrastructure.downloads.urllib.request.urlopen", side_effect=fake_urlopen(b"too many bytes")):
+    with patch("doomdeck.infrastructure.downloads._open_url", side_effect=fake_urlopen(b"too many bytes")):
         with pytest.raises(DoomDeckError, match="exceeds maximum allowed size"):
             download_url(
                 "https://example.test/file.pk3",
@@ -141,7 +194,7 @@ def test_download_url_aborts_streams_that_exceed_expected_size(tmp_path: Path) -
 def test_download_url_removes_partial_file_after_checksum_failure(tmp_path: Path) -> None:
     dest = tmp_path / "file.pk3"
 
-    with patch("doomdeck.infrastructure.downloads.urllib.request.urlopen", side_effect=fake_urlopen(b"bad bytes")):
+    with patch("doomdeck.infrastructure.downloads._open_url", side_effect=fake_urlopen(b"bad bytes")):
         with pytest.raises(DoomDeckError, match="checksum mismatch"):
             download_url(
                 "https://example.test/file.pk3",
@@ -157,7 +210,7 @@ def test_download_url_removes_partial_file_after_checksum_failure(tmp_path: Path
 
 
 def test_download_url_preserves_download_error_context(tmp_path: Path) -> None:
-    with patch("doomdeck.infrastructure.downloads.urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+    with patch("doomdeck.infrastructure.downloads._open_url", side_effect=urllib.error.URLError("offline")):
         with pytest.raises(DoomDeckError, match="Failed to download"):
             download_url(
                 "https://example.test/file.pk3",
@@ -173,4 +226,4 @@ def test_metadata_fetches_reject_untrusted_urls() -> None:
         fetch_text_url("http://www.moddb.com/mods/brutal-doom")
 
     with pytest.raises(DoomDeckError, match="not allowed"):
-        github_request_json("https://example.test/repos/nledford/DoomDeck")
+        request_github_json("https://example.test/repos/nledford/DoomDeck", "test-agent")

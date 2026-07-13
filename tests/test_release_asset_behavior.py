@@ -31,13 +31,19 @@ def test_windows_release_asset_policy_prefers_recent_x86_64_zip() -> None:
         assets=[
             GitHubReleaseAssetPayload(name="DoomRunner-Linux-x86_64.AppImage", browser_download_url="https://example.test/linux.AppImage", size=100),
             GitHubReleaseAssetPayload(name="DoomRunner-Windows-legacy_i386.zip", browser_download_url="https://example.test/i386.zip", size=100),
-            GitHubReleaseAssetPayload(name="DoomRunner-Windows-recent_x86_64.zip", browser_download_url="https://example.test/x86_64.zip", size=100),
+            GitHubReleaseAssetPayload(
+                name="DoomRunner-Windows-recent_x86_64.zip",
+                browser_download_url="https://example.test/x86_64.zip",
+                size=100,
+                digest="sha256:" + "b" * 64,
+            ),
         ],
     )
 
     selected = select_windows_zip_release_asset(release, "Youda008/DoomRunner")
 
     assert selected.name == "DoomRunner-Windows-recent_x86_64.zip"
+    assert selected.sha256 == "b" * 64
 
 
 def test_release_asset_policy_rejects_unsuitable_windows_assets() -> None:

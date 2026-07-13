@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import logging
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import BinaryIO, Optional, Protocol
+from typing import BinaryIO, IO, Optional, Protocol, cast
 
 from doomdeck.domain.downloads import DownloadPolicy, DownloadVerification
 from doomdeck.domain.models import DoomDeckError
@@ -17,6 +18,39 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 
 class ReadableStream(Protocol):
     def read(self, size: int = -1) -> bytes: ...
+
+
+class DownloadResponse(ReadableStream, Protocol):
+    headers: object
+
+    def geturl(self) -> str: ...
+
+    def __enter__(self) -> "DownloadResponse": ...
+
+    def __exit__(self, *exc: object) -> None: ...
+
+
+class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, policy: DownloadPolicy) -> None:
+        super().__init__()
+        self.policy = policy
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        self.policy.validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_url(request: urllib.request.Request, policy: DownloadPolicy, timeout: int) -> DownloadResponse:
+    opener = urllib.request.build_opener(ValidatingRedirectHandler(policy))
+    return cast(DownloadResponse, opener.open(request, timeout=timeout))
 
 
 def sha256_file(path: Path) -> str:
@@ -109,9 +143,10 @@ def download_url(
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     max_allowed_bytes = max_bytes if max_bytes is not None else expected_size
     try:
-        # URL policy is validated before opening the request.
-        with urllib.request.urlopen(request, timeout=60) as response, tmp.open("wb") as handle:  # nosec B310
-            _copy_response_bounded(response, handle, url, max_allowed_bytes)
+        with _open_url(request, policy, timeout=60) as response:
+            policy.validate_url(response.geturl())
+            with tmp.open("wb") as handle:
+                _copy_response_bounded(response, handle, url, max_allowed_bytes)
         verify_download(tmp, url, verification)
         tmp.replace(dest)
     except DoomDeckError:
