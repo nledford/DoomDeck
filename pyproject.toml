@@ -5,6 +5,7 @@ description = "Steam Deck Doom modding setup automation for Doom Runner, UZDoom,
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "basedpyright>=1.39.9",
     "black>=26.5.1",
     "pydantic>=2.13.0,<3.0.0",
 ]
