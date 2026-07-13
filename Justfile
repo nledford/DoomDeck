@@ -56,9 +56,14 @@ ty-check:
 installer-check:
     sh -n install.sh
 
+# Verify the checked-in runtime dependency export matches uv.lock.
+[group("check")]
+runtime-lock-check:
+    @tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT; {{ uv }} export --frozen --no-dev --no-emit-project --no-header --format requirements.txt --output-file "$tmp" >/dev/null; diff -u requirements-runtime.lock "$tmp"
+
 # Run the standard local verification set.
 [group("check")]
-check: just-check installer-check pycompile ruff-check ty-check test cli-help module-help legacy-help
+check: just-check installer-check runtime-lock-check pycompile ruff-check ty-check test cli-help module-help legacy-help
 
 # Report cyclomatic complexity.
 [group("analysis")]
@@ -85,10 +90,10 @@ deps:
 complexity-gate:
     @output="$({{ uv }} run radon cc src tests -s -n E 2>&1)"; status=$?; if [ "$status" -ne 0 ]; then echo "$output"; exit "$status"; fi; if [ -n "$output" ]; then echo "$output"; exit 1; fi
 
-# Fail on severe maintainability regressions.
+# Reject new C-ranked files while allowing the documented existing baseline.
 [group("analysis")]
 maintainability-gate:
-    @output="$({{ uv }} run radon mi src tests -s -n D 2>&1)"; status=$?; if [ "$status" -ne 0 ]; then echo "$output"; exit "$status"; fi; if [ -n "$output" ]; then echo "$output"; exit 1; fi
+    @tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT; {{ uv }} run radon mi src tests -n C > "$tmp"; diff -u maintainability-baseline.txt "$tmp"
 
 # Run non-gating local analysis reports.
 [group("analysis")]
@@ -158,7 +163,7 @@ install:
 # Print the next semantic-release version without writing files, tags, or releases.
 [group("release")]
 release-check:
-    {{ uv }} run semantic-release --noop version --print --no-push --no-vcs-release
+    @set -euo pipefail; current_version="$( {{ uv }} run python -c 'import doomdeck; print(doomdeck.__version__)' )"; current_tag="v$current_version"; if git rev-parse --verify --quiet "refs/tags/$current_tag" >/dev/null && ! git merge-base --is-ancestor "$current_tag^{commit}" HEAD; then {{ uv }} run semantic-release --noop version --patch --print --no-push --no-vcs-release; else {{ uv }} run semantic-release --noop version --print --no-push --no-vcs-release; fi
 
 # Preview semantic-release changelog, version, commit, tag, and build actions.
 [group("release")]

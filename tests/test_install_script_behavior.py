@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import subprocess
 import sys
 import tarfile
@@ -11,6 +12,16 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEST_DEP_NAME = "doomdecktestdep"
+
+
+def test_install_script_resolves_default_branch_to_commit_archive() -> None:
+    script = (PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert "api.github.com/repos" in script
+    assert "/commits/" in script
+    assert 'archive/${resolved_ref}.tar.gz' in script
+    assert "class ValidatingRedirectHandler" in script
+    assert "validate_url(response.geturl())" in script
 
 
 def add_text_member(archive: tarfile.TarFile, name: str, content: str) -> None:
@@ -36,14 +47,18 @@ def make_test_dependency_wheel(path: Path) -> None:
 
 
 def make_minimal_source_archive(path: Path, *, include_symlink: bool = False, dependency_wheel: Path | None = None) -> None:
-    dependencies = f'dependencies = ["{TEST_DEP_NAME} @ {dependency_wheel.as_uri()}"]\n' if dependency_wheel else ""
+    requirements = "# No dependencies in test fixture.\n"
+    if dependency_wheel:
+        digest = hashlib.sha256(dependency_wheel.read_bytes()).hexdigest()
+        requirements = f"{TEST_DEP_NAME} @ {dependency_wheel.as_uri()} --hash=sha256:{digest}\n"
     main_module = (
         f"import {TEST_DEP_NAME}\nprint('usage: doomdeck')\nraise SystemExit(0)\n"
         if dependency_wheel
         else "print('usage: doomdeck')\nraise SystemExit(0)\n"
     )
     with tarfile.open(path, "w:gz") as archive:
-        add_text_member(archive, "DoomDeck-main/pyproject.toml", f"[project]\nname = 'doomdeck'\n{dependencies}")
+        add_text_member(archive, "DoomDeck-main/pyproject.toml", "[project]\nname = 'doomdeck'\n")
+        add_text_member(archive, "DoomDeck-main/requirements-runtime.lock", requirements)
         add_text_member(archive, "DoomDeck-main/src/doomdeck/__init__.py", "")
         add_text_member(archive, "DoomDeck-main/src/doomdeck/__main__.py", main_module)
         if include_symlink:
@@ -62,6 +77,7 @@ def make_repo_source_archive(path: Path) -> None:
 
     with tarfile.open(path, "w:gz") as archive:
         archive.add(PROJECT_ROOT / "pyproject.toml", arcname="DoomDeck-main/pyproject.toml")
+        archive.add(PROJECT_ROOT / "requirements-runtime.lock", arcname="DoomDeck-main/requirements-runtime.lock")
         archive.add(PROJECT_ROOT / "src" / "doomdeck", arcname="DoomDeck-main/src/doomdeck", filter=source_filter)
 
 

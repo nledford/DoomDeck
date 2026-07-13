@@ -1,0 +1,2 @@
+src/doomdeck/cli.py - C
+src/doomdeck/application/validation.py - C

@@ -38,6 +38,14 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --dev
 
+      - name: Check runtime dependency lock
+        shell: bash
+        run: |
+          runtime_lock="$(mktemp)"
+          trap 'rm -f "${runtime_lock}"' EXIT
+          uv export --frozen --no-dev --no-emit-project --no-header --format requirements.txt --output-file "${runtime_lock}" >/dev/null
+          diff -u requirements-runtime.lock "${runtime_lock}"
+
       - name: Compile Python files
         run: uv run python -m compileall -q doom_deck_setup.py src tests
 
@@ -99,32 +107,49 @@ jobs:
         run: |
           semver_pattern='^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'
           next_version="$(uv run semantic-release version --print | sed -nE "/${semver_pattern}/ {p; q;}")"
-          last_version="$(uv run semantic-release version --print-last-released | sed -nE "/${semver_pattern}/ {p; q;}")"
+          force_patch=false
 
           if [[ -z "${next_version}" ]]; then
             echo "Could not determine the next release version." >&2
             exit 1
           fi
 
-          if [[ "${next_version}" == "${last_version}" ]]; then
-            echo "release_needed=false" >> "${GITHUB_OUTPUT}"
-            echo "No release needed; ${last_version} is already current."
-            exit 0
+          next_tag="v${next_version}"
+          if git rev-parse --verify --quiet "refs/tags/${next_tag}" >/dev/null; then
+            if git merge-base --is-ancestor "${next_tag}^{commit}" HEAD; then
+              echo "release_needed=false" >> "${GITHUB_OUTPUT}"
+              echo "No release needed; ${next_tag} is already reachable from this branch."
+              exit 0
+            fi
+
+            next_version="$(uv run semantic-release version --patch --print | sed -nE "/${semver_pattern}/ {p; q;}")"
+            next_tag="v${next_version}"
+            force_patch=true
+            if git rev-parse --verify --quiet "refs/tags/${next_tag}" >/dev/null; then
+              echo "Recovery tag ${next_tag} already exists; reconcile release history manually." >&2
+              exit 1
+            fi
           fi
 
           {
             echo "release_needed=true"
             echo "version=${next_version}"
-            echo "tag=v${next_version}"
+            echo "tag=${next_tag}"
+            echo "force_patch=${force_patch}"
           } >> "${GITHUB_OUTPUT}"
-          echo "Release needed: v${next_version}"
+          echo "Release needed: ${next_tag}"
 
       - name: Create release commit and tag
         if: steps.release-plan.outputs.release_needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GIT_COMMIT_AUTHOR: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-        run: uv run semantic-release version
+        run: |
+          if [[ "${{ steps.release-plan.outputs.force_patch }}" == "true" ]]; then
+            uv run semantic-release version --patch
+          else
+            uv run semantic-release version
+          fi
 
       - name: Upload package artifacts to GitHub release
         if: steps.release-plan.outputs.release_needed == 'true'

@@ -26,7 +26,7 @@ fail() {
 
 repo_url=${DOOMDECK_REPO_URL:-https://github.com/nledford/DoomDeck}
 ref=${DOOMDECK_REF:-master}
-archive_url=${DOOMDECK_ARCHIVE_URL:-"$repo_url/archive/refs/heads/$ref.tar.gz"}
+archive_url=${DOOMDECK_ARCHIVE_URL:-}
 install_dir=${DOOMDECK_INSTALL_DIR:-"$HOME/.local/share/doomdeck/source"}
 bin_dir=${DOOMDECK_BIN_DIR:-"$HOME/.local/bin"}
 command_name=${DOOMDECK_COMMAND:-doomdeck}
@@ -48,6 +48,54 @@ import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
 PY
 
+if [ -z "$archive_url" ]; then
+    resolved_ref=$(
+        "$python_path" - "$repo_url" "$ref" <<'PY'
+import json
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+repo_url, ref = sys.argv[1:]
+normalized = repo_url.rstrip("/")
+if normalized.endswith(".git"):
+    normalized = normalized[:-4]
+parsed = urllib.parse.urlparse(normalized)
+parts = [part for part in parsed.path.split("/") if part]
+if parsed.scheme != "https" or (parsed.hostname or "").lower() != "github.com" or len(parts) != 2:
+    raise SystemExit("DOOMDECK_REPO_URL must be an https://github.com/OWNER/REPO URL")
+api_url = f"https://api.github.com/repos/{parts[0]}/{parts[1]}/commits/{urllib.parse.quote(ref, safe='')}"
+request = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": "doomdeck-installer"})
+
+
+def validate_url(target):
+    parsed_target = urllib.parse.urlparse(target)
+    if parsed_target.scheme != "https" or (parsed_target.hostname or "").lower() != "api.github.com":
+        raise ValueError(f"GitHub metadata redirect is not allowed: {target}")
+
+
+class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+validate_url(api_url)
+opener = urllib.request.build_opener(ValidatingRedirectHandler())
+with opener.open(request, timeout=30) as response:
+    validate_url(response.geturl())
+    sha = json.load(response).get("sha", "")
+if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+    raise SystemExit(f"GitHub did not return a commit SHA for {ref}")
+print(sha)
+PY
+    ) || fail "failed to resolve DoomDeck ref $ref to an immutable GitHub commit"
+    normalized_repo_url=${repo_url%/}
+    normalized_repo_url=${normalized_repo_url%.git}
+    archive_url="$normalized_repo_url/archive/${resolved_ref}.tar.gz"
+fi
+
 tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/doomdeck-install.XXXXXX") || fail "could not create a temporary directory"
 cleanup() {
     rm -rf "$tmp_root"
@@ -55,13 +103,39 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 download_archive() {
-    if command -v curl >/dev/null 2>&1; then
-        curl -LsSf "$archive_url" -o "$1"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$1" "$archive_url"
-    else
-        fail "curl or wget is required"
-    fi
+    "$python_path" - "$archive_url" "$1" "${DOOMDECK_ARCHIVE_URL:+explicit}" <<'PY'
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+
+url, destination, explicit = sys.argv[1:]
+
+
+def validate_url(target):
+    parsed = urllib.parse.urlparse(target)
+    if explicit and parsed.scheme == "file":
+        return
+    if parsed.scheme != "https":
+        raise ValueError(f"source archive URL must use https: {target}")
+    hostname = (parsed.hostname or "").lower()
+    if not explicit and hostname != "github.com" and not hostname.endswith(".github.com"):
+        raise ValueError(f"source archive redirect host is not allowed: {hostname or '<missing>'}")
+
+
+class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+validate_url(url)
+opener = urllib.request.build_opener(ValidatingRedirectHandler())
+request = urllib.request.Request(url, headers={"User-Agent": "doomdeck-installer"})
+with opener.open(request, timeout=60) as response, open(destination, "wb") as output:
+    validate_url(response.geturl())
+    shutil.copyfileobj(response, output)
+PY
 }
 
 archive_path="$tmp_root/doomdeck.tar.gz"
@@ -69,7 +143,7 @@ extract_dir="$tmp_root/extract"
 tmp_install="$tmp_root/source"
 launcher="$bin_dir/$command_name"
 previous_install="$install_dir.previous"
-requirements_path="$tmp_root/requirements.txt"
+requirements_path="$tmp_install/requirements-runtime.lock"
 
 info "Downloading $archive_url"
 download_archive "$archive_path" || fail "failed to download DoomDeck source archive"
@@ -131,6 +205,7 @@ PY
 source_dir=$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 [ -n "$source_dir" ] || fail "source archive did not contain a top-level directory"
 [ -f "$source_dir/pyproject.toml" ] || fail "source archive is missing pyproject.toml"
+[ -f "$source_dir/requirements-runtime.lock" ] || fail "source archive is missing requirements-runtime.lock"
 [ -d "$source_dir/src/doomdeck" ] || fail "source archive is missing src/doomdeck"
 
 (
@@ -146,77 +221,8 @@ venv_dir="$tmp_install/.venv"
 venv_python="$venv_dir/bin/python"
 [ -x "$venv_python" ] || fail "DoomDeck Python environment is missing its interpreter: $venv_python"
 
-"$python_path" - "$tmp_install/pyproject.toml" >"$requirements_path" <<'PY' ||
-import ast
-import sys
-from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    tomllib = None
-
-pyproject_path = Path(sys.argv[1])
-
-
-def fallback_dependencies(path):
-    in_project = False
-    collecting_dependencies = False
-    dependency_lines = []
-    bracket_depth = 0
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            if collecting_dependencies:
-                break
-            in_project = line == "[project]"
-            continue
-        if not in_project:
-            continue
-        if collecting_dependencies:
-            dependency_lines.append(line)
-            bracket_depth += line.count("[") - line.count("]")
-            if bracket_depth <= 0:
-                break
-            continue
-        key, separator, value = line.partition("=")
-        if separator and key.strip() == "dependencies":
-            dependency_lines.append(value.strip())
-            bracket_depth += value.count("[") - value.count("]")
-            if bracket_depth <= 0:
-                break
-            collecting_dependencies = True
-
-    if not dependency_lines:
-        return []
-    dependencies = ast.literal_eval("\n".join(dependency_lines))
-    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
-        raise ValueError("project.dependencies must be a list of strings")
-    return dependencies
-
-
-if tomllib is None:
-    dependencies = fallback_dependencies(pyproject_path)
-else:
-    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    dependencies = data.get("project", {}).get("dependencies", [])
-    if dependencies is None:
-        dependencies = []
-    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
-        raise ValueError("project.dependencies must be a list of strings")
-
-for dependency in dependencies:
-    print(dependency)
-PY
-    fail "failed to read DoomDeck runtime dependencies"
-
-if [ -s "$requirements_path" ]; then
-    "$venv_python" -m pip install --disable-pip-version-check -r "$requirements_path" ||
-        fail "failed to install DoomDeck Python dependencies"
-fi
+"$venv_python" -m pip install --disable-pip-version-check --require-hashes --requirement "$requirements_path" ||
+    fail "failed to install DoomDeck Python dependencies"
 
 PYTHONPATH="$tmp_install/src" "$venv_python" -m doomdeck --help >/dev/null ||
     fail "downloaded DoomDeck source failed its import smoke test"

@@ -68,9 +68,10 @@ class VersioningBehaviorTests(unittest.TestCase):
         )
         self.assertTrue(any(dependency.startswith("ruff") for dependency in dev_dependencies))
         self.assertTrue(any(dependency.startswith("ty") for dependency in dev_dependencies))
-        self.assertEqual(semantic_release["assets"], ["uv.lock"])
+        self.assertEqual(semantic_release["assets"], ["uv.lock", "requirements-runtime.lock"])
         self.assertTrue(semantic_release["allow_zero_version"])
-        self.assertEqual(semantic_release["build_command"], "uv lock && uv build --clear")
+        self.assertIn("uv export --frozen --no-dev --no-emit-project", semantic_release["build_command"])
+        self.assertTrue(semantic_release["build_command"].endswith("uv build --clear"))
         self.assertIn("[skip ci]", semantic_release["commit_message"])
         self.assertEqual(semantic_release["commit_parser"], "conventional")
         self.assertEqual(semantic_release["tag_format"], "v{version}")
@@ -87,6 +88,11 @@ class VersioningBehaviorTests(unittest.TestCase):
             semantic_release["changelog"]["default_templates"]["changelog_file"],
             "CHANGELOG.md",
         )
+        justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+        self.assertIn("git merge-base --is-ancestor", justfile)
+        self.assertIn("version --patch --print", justfile)
+        self.assertIn("import doomdeck", justfile)
+        self.assertNotIn("import tomllib", justfile)
         self.assertTrue(semantic_release["remote"]["ignore_token_for_push"])
         self.assertTrue(semantic_release["publish"]["upload_to_vcs_release"])
 
@@ -109,22 +115,29 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("{{ uv }} run ruff check .", justfile)
         self.assertIn("ty-check:", justfile)
         self.assertIn("{{ uv }} run ty check", justfile)
-        self.assertIn("check: just-check installer-check pycompile ruff-check ty-check test", justfile)
+        self.assertIn("maintainability-baseline.txt", justfile)
+        self.assertIn("radon mi src tests -n C", justfile)
+        self.assertNotIn("radon mi src tests -s -n D", justfile)
+        self.assertIn(
+            "check: just-check installer-check runtime-lock-check pycompile ruff-check ty-check test",
+            justfile,
+        )
 
     def test_changelog_is_ready_for_semantic_release_updates(self) -> None:
         changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
         self.assertIn("# Changelog", changelog)
         self.assertIn("<!-- version list -->", changelog)
+        self.assertIn("## v1.0.0", changelog)
         self.assertIn("## v0.2.0", changelog)
         self.assertIn("## v0.1.0", changelog)
 
     def test_readme_describes_the_current_release_check_result(self) -> None:
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("current release is `0.2.0`", readme)
-        self.assertIn("`v0.2.0`", readme)
-        self.assertIn("reports `0.2.0` as already released", readme)
+        self.assertIn("current release is `1.0.0`", readme)
+        self.assertIn("`v1.0.0`", readme)
+        self.assertIn("detached release tags", readme)
 
     def test_justfile_uses_uv_from_path_by_default(self) -> None:
         justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
@@ -154,8 +167,13 @@ class VersioningBehaviorTests(unittest.TestCase):
         self.assertIn("uv run pytest", workflow)
         self.assertIn("uv run ruff check .", workflow)
         self.assertIn("uv run ty check", workflow)
+        self.assertIn("uv export --frozen --no-dev --no-emit-project", workflow)
+        self.assertIn("diff -u requirements-runtime.lock", workflow)
         self.assertIn("uv build --clear", workflow)
         self.assertIn("uv run semantic-release version", workflow)
+        self.assertIn("git merge-base --is-ancestor", workflow)
+        self.assertIn("semantic-release version --patch --print", workflow)
+        self.assertIn("force_patch", workflow)
         self.assertIn("uv run semantic-release publish", workflow)
         self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
         self.assertIn("GIT_COMMIT_AUTHOR: github-actions[bot]", workflow)

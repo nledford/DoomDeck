@@ -6,6 +6,15 @@ DoomDeck uses Semantic Versioning and Conventional Commits. Release entries are 
 
 <!-- version list -->
 
+## v1.0.0 (2026-06-09)
+
+### Highlights
+
+- Added automated GitHub releases and supported-Python CI coverage.
+- Added safe archive extraction, bounded downloads, and validated GitHub payloads.
+- Added ModDB WAD installation and managed mod provenance.
+- Extracted domain, application, validation, download, and mod-install boundaries.
+
 ## v0.2.0 - 2026-05-31
 
 ### Chores

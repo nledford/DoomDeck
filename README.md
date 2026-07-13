@@ -531,7 +531,7 @@ just quality
 
 ### Versioning and Releases
 
-DoomDeck uses Semantic Versioning for package versions. The current release is `0.2.0`, which means the project is still before a stable `1.0.0` release.
+DoomDeck uses Semantic Versioning for package versions. The current release is `1.0.0`, tagged as `v1.0.0`.
 
 DoomDeck's GitHub release workflow uses Conventional Commits to infer the next version from commit history:
 
@@ -545,7 +545,7 @@ To preview the next calculated version locally without writing files, creating t
 just release-check
 ```
 
-Python Semantic Release calculates from Git release tags, not from the version currently written in `pyproject.toml`. The latest release tag is `v0.2.0`, so `just release-check` reports `0.2.0` as already released until a later `fix:`, `feat:`, or breaking-change commit requires a new version.
+Python Semantic Release calculates from Git release tags, not only from the version written in `pyproject.toml`. The workflow detects detached release tags and recovers by forcing the next patch release on `master`; it refuses to reuse an existing recovery tag.
 
 When a release is needed, GitHub Actions runs the test suite, updates `pyproject.toml`, `src/doomdeck/__init__.py`, and `uv.lock`, creates a release commit and tag, builds the source distribution and wheel, and uploads those files to the GitHub Release. It does not publish to PyPI.
 
