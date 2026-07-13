@@ -3,10 +3,20 @@ from __future__ import annotations
 
 from typing import Sequence, TypeAlias
 
-from doomdeck.domain.control_mapping import ControlScheme
+from doomdeck.domain.control_mapping import ControlAction, ControlScheme, PhysicalInput, SteamInputBinding
 
 VDFValue: TypeAlias = str | Sequence[tuple[str, "VDFValue"]]
 VDFEntries: TypeAlias = Sequence[tuple[str, VDFValue]]
+SWITCH_PHYSICAL_INPUTS = {
+    PhysicalInput.MENU,
+    PhysicalInput.VIEW,
+    PhysicalInput.LEFT_BUMPER,
+    PhysicalInput.RIGHT_BUMPER,
+    PhysicalInput.L4,
+    PhysicalInput.R4,
+    PhysicalInput.L5,
+    PhysicalInput.R5,
+}
 
 
 def dumps_vdf(entries: VDFEntries) -> str:
@@ -17,6 +27,36 @@ def dumps_vdf(entries: VDFEntries) -> str:
 
 def render_steam_input_layout(layout: ControlScheme, *, url: str = "template://doomdeck_hybrid_kbm.vdf") -> str:
     """Serialize a Steam Deck keyboard/mouse layout as Steam Input VDF."""
+
+    groups: list[tuple[str, VDFValue]] = []
+    source_bindings: list[tuple[str, VDFValue]] = []
+    if _has_binding(layout, {PhysicalInput.A, PhysicalInput.B, PhysicalInput.X, PhysicalInput.Y}):
+        groups.append(_four_button_group(layout))
+        source_bindings.append(("0", "button_diamond active"))
+    if _has_binding(layout, {PhysicalInput.LEFT_TRACKPAD}):
+        groups.append(_left_trackpad_radial_group(layout))
+        source_bindings.append(("1", "left_trackpad active"))
+    if _has_binding(layout, {PhysicalInput.RIGHT_TRACKPAD}, ControlAction.AIM):
+        groups.append(_right_trackpad_group(layout))
+        source_bindings.append(("2", "right_trackpad active"))
+    if _has_binding(layout, {PhysicalInput.LEFT_STICK}, ControlAction.MOVE):
+        groups.append(_left_stick_group(layout))
+        source_bindings.append(("3", "joystick active"))
+    if _has_binding(layout, {PhysicalInput.LEFT_TRIGGER}):
+        groups.append(_left_trigger_group(layout))
+        source_bindings.append(("4", "left_trigger active"))
+    if _has_binding(layout, {PhysicalInput.RIGHT_TRIGGER}):
+        groups.append(_right_trigger_group(layout))
+        source_bindings.append(("5", "right_trigger active"))
+    if _has_binding(layout, SWITCH_PHYSICAL_INPUTS):
+        groups.append(_switches_group(layout))
+        source_bindings.append(("6", "switch active"))
+    if _has_binding(layout, {PhysicalInput.DPAD}):
+        groups.append(_dpad_group(layout))
+        source_bindings.append(("7", "dpad active"))
+    if _has_binding(layout, {PhysicalInput.RIGHT_STICK}, ControlAction.AIM):
+        groups.append(_right_stick_group(layout))
+        source_bindings.append(("8", "right_joystick active"))
 
     entries: VDFEntries = [
         (
@@ -36,16 +76,8 @@ def render_steam_input_layout(layout: ControlScheme, *, url: str = "template://d
                 ("minor_revision", "0"),
                 ("Timestamp", "0"),
                 ("localization", [("english", [("title", layout.name), ("description", layout.description)])]),
-                _four_button_group(),
-                _left_trackpad_radial_group(),
-                _right_trackpad_group(layout),
-                _left_stick_group(layout),
-                _left_trigger_group(),
-                _right_trigger_group(),
-                _switches_group(),
-                _dpad_group(),
-                _right_stick_group(layout),
-                _default_preset(),
+                *groups,
+                _default_preset(source_bindings),
                 ("settings", [("left_trackpad_mode", "0"), ("right_trackpad_mode", "0")]),
             ],
         )
@@ -53,7 +85,7 @@ def render_steam_input_layout(layout: ControlScheme, *, url: str = "template://d
     return dumps_vdf(entries)
 
 
-def _four_button_group() -> tuple[str, VDFValue]:
+def _four_button_group(layout: ControlScheme) -> tuple[str, VDFValue]:
     return (
         "group",
         [
@@ -63,36 +95,18 @@ def _four_button_group() -> tuple[str, VDFValue]:
             ("description", "Console-style use/crouch/reload/jump mapped to keyboard keys"),
             (
                 "inputs",
-                [
-                    _button_input("button_a", "key_press E, Use / confirm, , ", repeat=True),
-                    _button_input("button_b", "key_press LEFT_CONTROL, Crouch / menu back, , ", repeat=True),
-                    _button_input("button_x", "key_press R, Reload, , ", repeat=True),
-                    _button_input("button_y", "key_press SPACE, Jump / use, , ", repeat=True),
-                ],
+                [_binding_input(binding, repeat=True) for binding in _slot_bindings(layout, {PhysicalInput.A, PhysicalInput.B, PhysicalInput.X, PhysicalInput.Y})],
             ),
             ("settings", [("button_size", "17994"), ("button_dist", "19994")]),
         ],
     )
 
 
-def _left_trackpad_radial_group() -> tuple[str, VDFValue]:
-    buttons = [
-        ("1", "Weapon slot 1"),
-        ("2", "Weapon slot 2"),
-        ("3", "Weapon slot 3"),
-        ("4", "Weapon slot 4"),
-        ("5", "Weapon slot 5"),
-        ("6", "Weapon slot 6"),
-        ("7", "Weapon slot 7"),
-        ("8", "Weapon slot 8"),
-        ("9", "Weapon slot 9"),
-        ("0", "Weapon slot 10"),
-        ("Q", "Brutal/PB kick"),
-        ("F", "Flashlight / zoom / mod utility"),
-        ("G", "PB equipment"),
-        ("U", "PB unload"),
-        ("LEFT_ALT", "PB dash"),
-        ("L", "PB clear debris"),
+def _left_trackpad_radial_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    bindings = [
+        binding
+        for binding in layout.bindings_for(PhysicalInput.LEFT_TRACKPAD)
+        if binding.layer == "radial" and binding.input_slot
     ]
     return (
         "group",
@@ -101,21 +115,26 @@ def _left_trackpad_radial_group() -> tuple[str, VDFValue]:
             ("mode", "radial_menu"),
             ("name", "Weapons and mod utilities"),
             ("description", "Direct slots plus Brutal Doom / Project Brutality utility keys"),
-            ("inputs", [(f"touch_menu_button_{index}", _activator(f"key_press {key}, {label}, , ")) for index, (key, label) in enumerate(buttons, start=1)]),
-            ("settings", [("requires_click", "0"), ("touch_menu_button_count", str(len(buttons)))]),
+            ("inputs", [_binding_input(binding) for binding in bindings]),
+            ("settings", [("requires_click", "0"), ("touch_menu_button_count", str(len(bindings)))]),
         ],
     )
 
 
 def _right_trackpad_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    click_bindings = [
+        binding
+        for binding in layout.bindings_for(PhysicalInput.RIGHT_TRACKPAD)
+        if binding.input_slot
+    ]
     return (
         "group",
         [
             ("id", "2"),
-            ("mode", "absolute_mouse"),
+            ("mode", _aim_mode(layout, PhysicalInput.RIGHT_TRACKPAD)),
             ("name", "Right trackpad aim"),
             ("description", "Primary mouse aim without gyro"),
-            ("inputs", [_button_input("click", "mouse_button MIDDLE, Zoom / center view, , ", activator="Soft_Press")]),
+            ("inputs", [_binding_input(binding) for binding in click_bindings]),
             ("settings", [("sensitivity", str(layout.sensitivity.right_trackpad)), ("doubetap_max_duration", "320")]),
         ],
     )
@@ -131,28 +150,39 @@ def _left_stick_group(layout: ControlScheme) -> tuple[str, VDFValue]:
             ("description", "Keyboard WASD movement"),
             (
                 "inputs",
-                [
-                    _button_input("dpad_north", "key_press W, Move forward, , ", repeat=True),
-                    _button_input("dpad_south", "key_press S, Move back, , ", repeat=True),
-                    _button_input("dpad_east", "key_press D, Strafe right, , ", repeat=True),
-                    _button_input("dpad_west", "key_press A, Strafe left, , ", repeat=True),
-                    _button_input("click", "key_press CAPSLOCK, Toggle run mode, , ", repeat=True),
-                ],
+                [_binding_input(binding, repeat=True) for binding in _slot_bindings(layout, {PhysicalInput.LEFT_STICK})],
             ),
             ("settings", [("requires_click", "0"), ("deadzone_inner_radius", str(layout.sensitivity.left_stick_deadzone))]),
         ],
     )
 
 
-def _left_trigger_group() -> tuple[str, VDFValue]:
-    return ("group", [("id", "4"), ("mode", "trigger"), ("name", "Left trigger alt fire"), ("inputs", [_button_input("edge", "mouse_button RIGHT, Alt fire / ADS, , ", haptic="2")])])
+def _left_trigger_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    return (
+        "group",
+        [
+            ("id", "4"),
+            ("mode", "trigger"),
+            ("name", "Left trigger alt fire"),
+            ("inputs", [_binding_input(binding, haptic="2") for binding in _slot_bindings(layout, {PhysicalInput.LEFT_TRIGGER})]),
+        ],
+    )
 
 
-def _right_trigger_group() -> tuple[str, VDFValue]:
-    return ("group", [("id", "5"), ("mode", "trigger"), ("name", "Right trigger fire"), ("inputs", [_button_input("edge", "mouse_button LEFT, Fire, , ", haptic="2")])])
+def _right_trigger_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    return (
+        "group",
+        [
+            ("id", "5"),
+            ("mode", "trigger"),
+            ("name", "Right trigger fire"),
+            ("inputs", [_binding_input(binding, haptic="2") for binding in _slot_bindings(layout, {PhysicalInput.RIGHT_TRIGGER})]),
+        ],
+    )
 
 
-def _switches_group() -> tuple[str, VDFValue]:
+def _switches_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    bindings = _slot_bindings(layout, SWITCH_PHYSICAL_INPUTS)
     return (
         "group",
         [
@@ -162,21 +192,19 @@ def _switches_group() -> tuple[str, VDFValue]:
             (
                 "inputs",
                 [
-                    _button_input("button_escape", "key_press ESCAPE, Menu / pause, , "),
-                    _button_input("button_menu", "key_press TAB, Automap, , "),
-                    _button_input("left_bumper", "mouse_wheel SCROLL_DOWN, Previous weapon, , "),
-                    _button_input("right_bumper", "mouse_wheel SCROLL_UP, Next weapon, , "),
-                    _button_input("button_back_left_upper", "key_press SPACE, L4 jump, , ", repeat=True),
-                    _button_input("button_back_right_upper", "key_press LEFT_CONTROL, R4 crouch, , ", repeat=True),
-                    _button_input("button_back_left", "key_press F6, L5 quick save, , ", haptic="2"),
-                    _long_press_input("button_back_right", "key_press F9, R5 long-press quick load, , ", long_press_ms=1500),
+                    _binding_input(
+                        binding,
+                        repeat=binding.physical_input in {PhysicalInput.L4, PhysicalInput.R4},
+                        haptic="2" if binding.physical_input == PhysicalInput.L5 else "1",
+                    )
+                    for binding in bindings
                 ],
             ),
         ],
     )
 
 
-def _dpad_group() -> tuple[str, VDFValue]:
+def _dpad_group(layout: ControlScheme) -> tuple[str, VDFValue]:
     return (
         "group",
         [
@@ -185,12 +213,7 @@ def _dpad_group() -> tuple[str, VDFValue]:
             ("name", "Menu navigation"),
             (
                 "inputs",
-                [
-                    _button_input("dpad_north", "key_press UP_ARROW, Menu up, , ", repeat=True),
-                    _button_input("dpad_south", "key_press DOWN_ARROW, Menu down, , ", repeat=True),
-                    _button_input("dpad_east", "key_press RIGHT_ARROW, Menu right, , ", repeat=True),
-                    _button_input("dpad_west", "key_press LEFT_ARROW, Menu left, , ", repeat=True),
-                ],
+                [_binding_input(binding, repeat=True) for binding in _slot_bindings(layout, {PhysicalInput.DPAD})],
             ),
             ("settings", [("requires_click", "0"), ("haptic_intensity_override", "0")]),
         ],
@@ -198,14 +221,19 @@ def _dpad_group() -> tuple[str, VDFValue]:
 
 
 def _right_stick_group(layout: ControlScheme) -> tuple[str, VDFValue]:
+    click_bindings = [
+        binding
+        for binding in layout.bindings_for(PhysicalInput.RIGHT_STICK)
+        if binding.input_slot
+    ]
     return (
         "group",
         [
             ("id", "8"),
-            ("mode", "joystick_mouse"),
+            ("mode", _aim_mode(layout, PhysicalInput.RIGHT_STICK)),
             ("name", "Right stick mouse"),
             ("description", "Conservative coarse mouse aim; right trackpad remains primary aim"),
-            ("inputs", [_button_input("click", "mouse_button MIDDLE, Zoom / center view, , ")]),
+            ("inputs", [_binding_input(binding) for binding in click_bindings]),
             (
                 "settings",
                 [
@@ -218,27 +246,62 @@ def _right_stick_group(layout: ControlScheme) -> tuple[str, VDFValue]:
     )
 
 
-def _default_preset() -> tuple[str, VDFValue]:
+def _default_preset(source_bindings: list[tuple[str, VDFValue]]) -> tuple[str, VDFValue]:
     return (
         "preset",
         [
             ("id", "0"),
             ("name", "Default"),
-            (
-                "group_source_bindings",
-                [
-                    ("6", "switch active"),
-                    ("0", "button_diamond active"),
-                    ("1", "left_trackpad active"),
-                    ("2", "right_trackpad active"),
-                    ("3", "joystick active"),
-                    ("4", "left_trigger active"),
-                    ("5", "right_trigger active"),
-                    ("8", "right_joystick active"),
-                    ("7", "dpad active"),
-                ],
-            ),
+            ("group_source_bindings", source_bindings),
         ],
+    )
+
+
+def _slot_bindings(layout: ControlScheme, physical_inputs: set[PhysicalInput]) -> list[SteamInputBinding]:
+    return [
+        binding
+        for binding in layout.bindings
+        if binding.physical_input in physical_inputs and binding.input_slot
+    ]
+
+
+def _has_binding(
+    layout: ControlScheme,
+    physical_inputs: set[PhysicalInput],
+    action: ControlAction | None = None,
+) -> bool:
+    return any(
+        binding.physical_input in physical_inputs and (action is None or binding.action == action)
+        for binding in layout.bindings
+    )
+
+
+def _aim_mode(layout: ControlScheme, physical_input: PhysicalInput) -> str:
+    for binding in layout.bindings_for(physical_input):
+        if binding.action == ControlAction.AIM:
+            return binding.output.value
+    raise ValueError(f"Steam Input aim binding is missing: {physical_input.value}")
+
+
+def _binding_input(
+    binding: SteamInputBinding,
+    *,
+    repeat: bool = False,
+    haptic: str = "1",
+) -> tuple[str, VDFValue]:
+    if not binding.input_slot:
+        raise ValueError(f"Steam Input binding is missing an input slot: {binding.physical_input.value}")
+    serialized = binding.output.steam_input_binding()
+    if binding.activation == "Long_Press":
+        if binding.long_press_ms is None:
+            raise ValueError(f"Long-press binding is missing its duration: {binding.physical_input.value}")
+        return _long_press_input(binding.input_slot, serialized, long_press_ms=binding.long_press_ms)
+    return _button_input(
+        binding.input_slot,
+        serialized,
+        activator=binding.activation,
+        repeat=repeat,
+        haptic=haptic,
     )
 
 

@@ -9,7 +9,11 @@ def test_default_control_scheme_uses_keyboard_mouse_layout_without_gyro() -> Non
     outputs = [binding.output.steam_input_binding() for binding in scheme.bindings]
 
     assert not scheme.gyro_enabled
-    assert any("key_press WASD" in output for output in outputs)
+    assert {"W", "A", "S", "D"} <= {
+        binding.output.value
+        for binding in scheme.bindings
+        if binding.physical_input == PhysicalInput.LEFT_STICK and binding.action == ControlAction.MOVE
+    }
     assert any("mouse_button LEFT" in output for output in outputs)
     assert any("mouse_button RIGHT" in output for output in outputs)
     assert any("mouse_wheel SCROLL_UP" in output for output in outputs)

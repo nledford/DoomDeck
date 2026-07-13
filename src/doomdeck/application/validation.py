@@ -8,15 +8,18 @@ from typing import Any, Callable, Iterable, Optional, cast
 
 from doomdeck.application.doomrunner import doomrunner_options_paths
 from doomdeck.application.doomrunner_validation import inspect_doomrunner_options
+from doomdeck.application.control_mapping import build_default_control_scheme
 from doomdeck.application.steam import doomrunner_proton_options_path
 from doomdeck.application.steam_input import managed_steam_input_profile_path
 from doomdeck.domain.deck import STEAM_DECK_HEIGHT, STEAM_DECK_WIDTH
+from doomdeck.domain.control_mapping import ControlAction
 from doomdeck.domain.models import Dirs, DoomDeckError, SteamInfo, ValidationItem, ValidationLevel
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD
 from doomdeck.domain.presets import PresetManifest
 from doomdeck.domain.wads import IWAD_CANONICAL_NAMES
 from doomdeck.infrastructure.archives import zip_contains_markers
 from doomdeck.infrastructure.binary_vdf import BKV_OBJECT
+from doomdeck.infrastructure.steam_input_vdf import render_steam_input_layout
 from doomdeck.infrastructure.steam_compat import compat_mapping_key, load_text_vdf
 from doomdeck.infrastructure.steam_shortcuts import get_bkv_str, load_shortcuts, shortcut_entries
 
@@ -34,6 +37,35 @@ def add_validation_item(items: list[ValidationItem], level: ValidationLevel | st
 
 def validation_has_failures(items: Iterable[ValidationItem]) -> bool:
     return any(item.level == ValidationLevel.FAIL for item in items)
+
+
+def _vdf_named_blocks(text: str, name: str) -> list[str]:
+    marker = f'"{name}"'
+    blocks: list[str] = []
+    search_start = 0
+    while (marker_start := text.find(marker, search_start)) >= 0:
+        block_start = text.find("{", marker_start + len(marker))
+        if block_start < 0:
+            break
+        depth = 0
+        for index in range(block_start, len(text)):
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append(text[marker_start : index + 1])
+                    search_start = index + 1
+                    break
+        else:
+            break
+    return blocks
+
+
+def _vdf_group_block(text: str, group_id: str) -> str | None:
+    id_entry = f'"id"\t\t"{group_id}"'
+    matches = [block for block in _vdf_named_blocks(text, "group") if id_entry in block]
+    return matches[0] if len(matches) == 1 else None
 
 
 def format_validation_report(items: Iterable[ValidationItem]) -> str:
@@ -155,10 +187,16 @@ class InstallationValidator:
         path: Path,
         label: str,
     ) -> Optional[dict[str, Any]]:
+        if not path.is_file():
+            add_validation_item(items, "FAIL", f"{label} is not a file: {path}")
+            return None
         try:
             parsed = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             add_validation_item(items, "FAIL", f"{label} is invalid: {path}: {exc}")
+            return None
+        except (OSError, UnicodeError) as exc:
+            add_validation_item(items, "FAIL", f"{label} could not be read: {path}: {exc}")
             return None
         if not isinstance(parsed, dict):
             add_validation_item(items, "FAIL", f"{label} must be an object: {path}")
@@ -274,28 +312,39 @@ class InstallationValidator:
             return
         text = path.read_text(encoding="utf-8", errors="ignore")
         lower = text.lower()
+        layout = build_default_control_scheme()
+        serialized_bindings = [
+            binding.output.steam_input_binding()
+            for binding in layout.bindings
+            if binding.input_slot
+        ]
+        serialized_slots = [f'"{binding.input_slot}"' for binding in layout.bindings if binding.input_slot]
         core_bindings_ok = all(
             needle in text
             for needle in [
                 '"controller_type"\t\t"controller_neptune"',
-                "DoomDeck Hybrid KB/M",
-                "key_press W",
-                "key_press CAPSLOCK",
-                "key_press E",
-                "mouse_button LEFT",
-                "mouse_button RIGHT",
-                "mouse_wheel SCROLL_UP",
-                "mouse_wheel SCROLL_DOWN",
-                "key_press F6",
-                "key_press F9",
-                '"button_back_left_upper"',
-                '"button_back_right_upper"',
-                '"button_back_left"',
-                '"button_back_right"',
+                layout.name,
+                *serialized_bindings,
+                *serialized_slots,
             ]
         )
-        gyro_disabled = "gyro active" not in lower and '"gyro"' not in lower
-        quickload_safe = '"button_back_right"' in text and '"Long_Press"' in text and '"long_press_time"\t\t"1500"' in text
+        gyro_disabled = not layout.gyro_enabled and "gyro active" not in lower and '"gyro"' not in lower
+        quickload_binding = next(
+            (binding for binding in layout.bindings if binding.action == ControlAction.QUICK_LOAD),
+            None,
+        )
+        expected_profile = render_steam_input_layout(layout)
+        expected_switches_group = _vdf_group_block(expected_profile, "6")
+        installed_switches_group = _vdf_group_block(text, "6")
+        quickload_safe = (
+            quickload_binding is not None
+            and quickload_binding.activation == "Long_Press"
+            and quickload_binding.long_press_ms is not None
+            and text.count(f'"{quickload_binding.input_slot}"')
+            == expected_profile.count(f'"{quickload_binding.input_slot}"')
+            and expected_switches_group is not None
+            and installed_switches_group == expected_switches_group
+        )
         add_validation_item(items, "PASS" if core_bindings_ok else "FAIL", f"DoomDeck Steam Input keyboard/mouse bindings: {path}")
         add_validation_item(items, "PASS" if gyro_disabled else "FAIL", f"DoomDeck Steam Input gyro is disabled: {path}")
         add_validation_item(items, "PASS" if quickload_safe else "FAIL", f"DoomDeck Steam Input quick load requires long press: {path}")

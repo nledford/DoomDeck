@@ -131,6 +131,43 @@ def test_validation_reports_malformed_preset_manifest_without_crashing(tmp_path:
     assert any("Preset manifest presets must be a list" in failure for failure in failures)
 
 
+def test_validation_reports_directory_valued_json_path_without_crashing(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    manifest_path.mkdir(parents=True)
+
+    report = validate_internal(
+        argparse.Namespace(dry_run=False),
+        dirs,
+        SteamInfo(None, None, None, [], None),
+        logging.getLogger("test"),
+    )
+
+    assert any(
+        item.level == "FAIL" and f"Preset manifest JSON is not a file: {manifest_path}" in item.message
+        for item in report
+    )
+
+
+def test_validation_reports_invalid_utf8_json_without_crashing(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    manifest_path = dirs.doomrunner_config / "preset-manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_bytes(b"\xff\xfe")
+
+    report = validate_internal(
+        argparse.Namespace(dry_run=False),
+        dirs,
+        SteamInfo(None, None, None, [], None),
+        logging.getLogger("test"),
+    )
+
+    assert any(
+        item.level == "FAIL" and f"Preset manifest JSON could not be read: {manifest_path}" in item.message
+        for item in report
+    )
+
+
 def test_uzdoom_configs_bind_quicksave_keys_without_direct_stick_click_quickload(tmp_path: Path) -> None:
     dirs = build_dirs(tmp_path / "Doom")
     logger = logging.getLogger("test")
@@ -273,3 +310,54 @@ def test_validation_reports_extra_doomdeck_steam_shortcuts(tmp_path: Path) -> No
     messages = {item.message: item.level for item in report}
     assert messages["Exactly one Steam shortcut exists for Windows Doom Runner with expected executable path"] == "PASS"
     assert messages["No extra DoomDeck preset Steam shortcuts remain: DoomDeck - Project Brutality"] == "FAIL"
+
+
+def test_validation_rejects_quickload_tokens_outside_r5_activator(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+    profile = write_managed_steam_input_profile(dirs, dry_run=False, logger=logger)
+    text = profile.read_text(encoding="utf-8").replace('"Long_Press"', '"Full_Press"', 1)
+    profile.write_text(
+        text + '\n"decoy" { "Long_Press" "long_press_time" "1500" "binding" "key_press F9" }\n',
+        encoding="utf-8",
+    )
+
+    report = validate_internal(
+        argparse.Namespace(dry_run=False, skip_doomrunner_live_config=False),
+        dirs,
+        SteamInfo(None, None, None, [], None),
+        logger,
+    )
+
+    quickload_items = [item for item in report if "quick load requires long press" in item.message]
+    assert len(quickload_items) == 1
+    assert quickload_items[0].level == "FAIL"
+
+
+def test_validation_rejects_duplicate_quickload_block_outside_switches_group(tmp_path: Path) -> None:
+    dirs = build_dirs(tmp_path / "Doom")
+    logger = logging.getLogger("test")
+    profile = write_managed_steam_input_profile(dirs, dry_run=False, logger=logger)
+    text = profile.read_text(encoding="utf-8")
+    marker_start = text.index('"button_back_right"')
+    block_start = text.index("{", marker_start)
+    depth = 0
+    block_end = block_start
+    for block_end in range(block_start, len(text)):
+        depth += (text[block_end] == "{") - (text[block_end] == "}")
+        if depth == 0:
+            break
+    valid_block = text[marker_start : block_end + 1]
+    unsafe_profile = text.replace('"Long_Press"', '"Full_Press"', 1)
+    profile.write_text(valid_block + "\n" + unsafe_profile, encoding="utf-8")
+
+    report = validate_internal(
+        argparse.Namespace(dry_run=False, skip_doomrunner_live_config=False),
+        dirs,
+        SteamInfo(None, None, None, [], None),
+        logger,
+    )
+
+    quickload_items = [item for item in report if "quick load requires long press" in item.message]
+    assert len(quickload_items) == 1
+    assert quickload_items[0].level == "FAIL"

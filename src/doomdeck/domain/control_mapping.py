@@ -101,6 +101,7 @@ class SteamInputBinding:
     long_press_ms: int | None = None
     chord_button: str | None = None
     note: str = ""
+    input_slot: str = ""
 
     @property
     def is_quickload(self) -> bool:
