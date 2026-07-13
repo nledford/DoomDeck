@@ -8,9 +8,12 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import urllib.error
+from email.message import Message
 from unittest.mock import patch
 
-from doomdeck.cli import build_arg_parser, main, restore, select_release_asset, select_windows_release_asset
+from doomdeck.application.release_assets import fetch_linux_release_asset, fetch_windows_release_asset
+from doomdeck.cli import build_arg_parser, main, restore, select_project_brutality_download
 from doomdeck.domain.models import DoomDeckError
 
 
@@ -185,9 +188,9 @@ class CLIBehaviorTests(unittest.TestCase):
             ],
         }
 
-        with patch("doomdeck.cli.github_request_json", return_value=release):
+        with patch("doomdeck.application.release_assets.request_github_json", return_value=release):
             with self.assertRaisesRegex(DoomDeckError, "assets\\.0\\.browser_download_url"):
-                select_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"))
+                fetch_linux_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"), "test-agent")
 
     def test_release_asset_selection_rejects_non_list_assets(self) -> None:
         release = {
@@ -198,9 +201,9 @@ class CLIBehaviorTests(unittest.TestCase):
             },
         }
 
-        with patch("doomdeck.cli.github_request_json", return_value=release):
+        with patch("doomdeck.application.release_assets.request_github_json", return_value=release):
             with self.assertRaisesRegex(DoomDeckError, "assets"):
-                select_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"))
+                fetch_linux_release_asset("ZDoom/UZDoom", False, logging.getLogger("test"), "test-agent")
 
     def test_windows_release_asset_selection_prefers_x86_64_zip_over_appimage_and_legacy(self) -> None:
         release = {
@@ -224,8 +227,8 @@ class CLIBehaviorTests(unittest.TestCase):
             ],
         }
 
-        with patch("doomdeck.cli.github_request_json", return_value=release):
-            asset = select_windows_release_asset("Youda008/DoomRunner", logging.getLogger("test"))
+        with patch("doomdeck.application.release_assets.request_github_json", return_value=release):
+            asset = fetch_windows_release_asset("Youda008/DoomRunner", logging.getLogger("test"), "test-agent")
 
         self.assertEqual(asset.name, "DoomRunner-1.9.2-Windows-recent_x86_64-static_exe.zip")
 
@@ -246,10 +249,54 @@ class CLIBehaviorTests(unittest.TestCase):
             ],
         }
 
-        with patch("doomdeck.cli.github_request_json", return_value=release):
-            asset = select_windows_release_asset("UZDoom/UZDoom", logging.getLogger("test"))
+        with patch("doomdeck.application.release_assets.request_github_json", return_value=release):
+            asset = fetch_windows_release_asset("UZDoom/UZDoom", logging.getLogger("test"), "test-agent")
 
         self.assertEqual(asset.name, "Windows-UZDoom-4.14.3.zip")
+
+    def test_project_brutality_release_404_resolves_commit_specific_fallback(self) -> None:
+        not_found = urllib.error.HTTPError(
+            "https://api.github.com/repos/pa1nki113r/Project_Brutality/releases/latest",
+            404,
+            "Not Found",
+            Message(),
+            io.BytesIO(),
+        )
+        commit = "a" * 40
+
+        with patch(
+            "doomdeck.cli.request_github_json",
+            side_effect=[not_found, {"default_branch": "main"}, {"sha": commit}],
+        ):
+            asset = select_project_brutality_download(logging.getLogger("test"))
+
+        self.assertEqual(
+            asset.url,
+            f"https://api.github.com/repos/pa1nki113r/Project_Brutality/zipball/{commit}",
+        )
+        self.assertIn(commit, asset.name)
+
+    def test_project_brutality_cache_names_distinguish_full_commit_shas(self) -> None:
+        prefix = "a" * 12
+        commits = [prefix + "1" * 28, prefix + "2" * 28]
+        names = []
+        for commit in commits:
+            not_found = urllib.error.HTTPError(
+                "https://api.github.com/repos/pa1nki113r/Project_Brutality/releases/latest",
+                404,
+                "Not Found",
+                Message(),
+                io.BytesIO(),
+            )
+            with patch(
+                "doomdeck.cli.request_github_json",
+                side_effect=[not_found, {"default_branch": "main"}, {"sha": commit}],
+            ):
+                names.append(select_project_brutality_download(logging.getLogger("test")).name)
+
+        self.assertNotEqual(names[0], names[1])
+        self.assertIn(commits[0], names[0])
+        self.assertIn(commits[1], names[1])
 
 
 if __name__ == "__main__":

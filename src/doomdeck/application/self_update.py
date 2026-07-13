@@ -1,11 +1,11 @@
 """Self-update helpers for source-archive DoomDeck installs."""
 from __future__ import annotations
 
-import ast
 import logging
 import os
 import shutil
 import subprocess
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from doomdeck.domain.models import DoomDeckError
 
 DEFAULT_SELF_UPDATE_REPO_URL = "https://github.com/nledford/DoomDeck"
 DEFAULT_SELF_UPDATE_REF = "master"
+RUNTIME_REQUIREMENTS_FILENAME = "requirements-runtime.lock"
 
 
 @dataclass(frozen=True)
@@ -37,14 +38,32 @@ def build_self_update_archive_url(
 ) -> str:
     if explicit_archive_url:
         return explicit_archive_url
+    normalized_repo_url, _repo_slug = _normalized_github_repo(repo_url)
+    if not ref.strip():
+        raise DoomDeckError("Self-update ref must not be empty")
+    if len(ref) == 40 and all(character in "0123456789abcdefABCDEF" for character in ref):
+        return f"{normalized_repo_url}/archive/{ref}.tar.gz"
+    encoded_ref = urllib.parse.quote(ref, safe="/")
+    return f"{normalized_repo_url}/archive/refs/heads/{encoded_ref}.tar.gz"
+
+
+def build_github_commit_api_url(repo_url: str, ref: str) -> str:
+    _normalized_repo_url, repo_slug = _normalized_github_repo(repo_url)
+    if not ref.strip():
+        raise DoomDeckError("Self-update ref must not be empty")
+    return f"https://api.github.com/repos/{repo_slug}/commits/{urllib.parse.quote(ref, safe='')}"
+
+
+def _normalized_github_repo(repo_url: str) -> tuple[str, str]:
     normalized_repo_url = repo_url.rstrip("/")
     if normalized_repo_url.endswith(".git"):
         normalized_repo_url = normalized_repo_url[:-4]
-    if not normalized_repo_url:
-        raise DoomDeckError("Self-update repository URL must not be empty")
-    if not ref.strip():
-        raise DoomDeckError("Self-update ref must not be empty")
-    return f"{normalized_repo_url}/archive/refs/heads/{ref}.tar.gz"
+    parsed = urllib.parse.urlparse(normalized_repo_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() != "github.com" or len(parts) != 2:
+        raise DoomDeckError(f"Self-update repository must be an https://github.com/OWNER/REPO URL: {repo_url}")
+    repo_slug = f"{parts[0]}/{parts[1]}"
+    return f"https://github.com/{repo_slug}", repo_slug
 
 
 def infer_source_install_dir(module_file: Path) -> Path:
@@ -82,48 +101,6 @@ def validate_self_update_source_dir(install_dir: Path) -> None:
         raise DoomDeckError(f"DoomDeck source install is missing src/doomdeck: {install_dir}")
 
 
-def read_project_dependencies(pyproject_path: Path) -> list[str]:
-    in_project = False
-    collecting_dependencies = False
-    dependency_lines: list[str] = []
-    bracket_depth = 0
-
-    for raw_line in pyproject_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            if collecting_dependencies:
-                break
-            in_project = line == "[project]"
-            continue
-        if not in_project:
-            continue
-        if collecting_dependencies:
-            dependency_lines.append(line)
-            bracket_depth += line.count("[") - line.count("]")
-            if bracket_depth <= 0:
-                break
-            continue
-        key, separator, value = line.partition("=")
-        if separator and key.strip() == "dependencies":
-            dependency_lines.append(value.strip())
-            bracket_depth += value.count("[") - value.count("]")
-            if bracket_depth <= 0:
-                break
-            collecting_dependencies = True
-
-    if not dependency_lines:
-        return []
-    try:
-        dependencies = ast.literal_eval("\n".join(dependency_lines))
-    except (SyntaxError, ValueError) as exc:
-        raise DoomDeckError(f"Could not read project dependencies from {pyproject_path}") from exc
-    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
-        raise DoomDeckError(f"Project dependencies must be a list of strings in {pyproject_path}")
-    return dependencies
-
-
 def runtime_venv_python(source_dir: Path) -> Path:
     if os.name == "nt":
         return source_dir / ".venv" / "Scripts" / "python.exe"
@@ -143,6 +120,10 @@ def _run_runtime_command(cmd: list[str], error_message: str) -> None:
 
 
 def prepare_self_update_runtime(source_dir: Path, python_executable: Path, logger: logging.Logger) -> Path:
+    requirements_path = source_dir / RUNTIME_REQUIREMENTS_FILENAME
+    if not requirements_path.is_file():
+        raise DoomDeckError(f"DoomDeck source is missing {RUNTIME_REQUIREMENTS_FILENAME}: {source_dir}")
+
     venv_dir = source_dir / ".venv"
     logger.debug("Create DoomDeck runtime venv: %s", venv_dir)
     _run_runtime_command(
@@ -153,13 +134,20 @@ def prepare_self_update_runtime(source_dir: Path, python_executable: Path, logge
     if not venv_python.is_file():
         raise DoomDeckError(f"DoomDeck Python environment is missing its interpreter: {venv_python}")
 
-    dependencies = read_project_dependencies(source_dir / "pyproject.toml")
-    if dependencies:
-        logger.debug("Install DoomDeck runtime dependencies into %s: %s", venv_dir, ", ".join(dependencies))
-        _run_runtime_command(
-            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", *dependencies],
-            "Failed to install DoomDeck Python dependencies",
-        )
+    logger.debug("Install hash-locked DoomDeck runtime dependencies into %s", venv_dir)
+    _run_runtime_command(
+        [
+            str(venv_python),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--require-hashes",
+            "--requirement",
+            str(requirements_path),
+        ],
+        "Failed to install DoomDeck Python dependencies",
+    )
     return venv_python
 
 

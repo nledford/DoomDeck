@@ -27,7 +27,6 @@ import datetime as _dt
 import json
 import logging
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -36,7 +35,6 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -57,13 +55,16 @@ from doomdeck.application.launchers import (
 from doomdeck.application.managed_mods import (
     install_brutal_doom_archive,
     install_project_brutality_archive,
+    installed_payload_matches,
     metadata_matches,
 )
 from doomdeck.application.moddb_wads import install_moddb_wad_urls
-from doomdeck.application.release_assets import select_linux_appimage_release_asset, select_windows_zip_release_asset
+from doomdeck.application.release_assets import fetch_windows_release_asset
+from doomdeck.application.restore import restore_backup_archive
 from doomdeck.application.self_update import (
     DEFAULT_SELF_UPDATE_REF,
     DEFAULT_SELF_UPDATE_REPO_URL,
+    build_github_commit_api_url,
     build_self_update_archive_url,
     build_self_update_plan,
     find_extracted_self_update_source_dir,
@@ -77,27 +78,32 @@ from doomdeck.application.steam import (
     add_or_update_doomrunner_shortcut,
     doomrunner_proton_options_path,
 )
+from doomdeck.application.steam_discovery import (
+    DOOM_PLUS_DOOM_II_APP_ID as APPID_DOOM_PLUS_DOOM_II,
+    SteamDiscoverySettings,
+    detect_steamos,
+    discover_steam,
+)
 from doomdeck.application.steam_input import deploy_steam_input_profile, write_managed_steam_input_profile
 from doomdeck.application.uzdoom import write_uzdoom_configs
 from doomdeck.application.validation import InstallationValidator, format_validation_report, validation_has_failures
-from doomdeck.application.wads import find_wads_in_install
-from doomdeck.domain.downloads import DownloadPolicy
+from doomdeck.application.wads import copy_addon_wads, copy_iwads, find_wads_in_install
 from doomdeck.domain.models import DoomDeckError, Dirs, GitHubAsset, SteamInfo, ValidationItem
 from doomdeck.domain.mods import BRUTAL_DOOM_MOD, PROJECT_BRUTALITY_MOD, ModSource
 from doomdeck.domain.paths import all_managed_dirs, build_dirs, expand_path
 from doomdeck.infrastructure.archives import (
     safe_extract_tar,
     safe_extract_zip,
-    validate_safe_tar,
     write_tree_tar_gz,
 )
 from doomdeck.infrastructure.downloads import download_url as _download_url
 from doomdeck.infrastructure.files import (
     atomic_write_text,
     backup_path,
-    files_equal,
 )
 from doomdeck.infrastructure.github_api import (
+    request_github_json,
+    validate_github_commit_payload,
     validate_github_release_payload,
     validate_github_repository_payload,
 )
@@ -107,24 +113,16 @@ from doomdeck.infrastructure.moddb import (
     select_brutal_doom_download,
 )
 
-APPID_DOOM_PLUS_DOOM_II = "2280"
 DEFAULT_ROOT = Path.home() / "Games" / "Doom"
 SCRIPT_VERSION = "2026.05.31"
 
 BRUTAL_DOOM_ALIAS = BRUTAL_DOOM_MOD.alias
 PROJECT_BRUTALITY_REPO = "pa1nki113r/Project_Brutality"
-STEAM_ROOT_CANDIDATES = [
-    Path.home() / ".local" / "share" / "Steam",
-    Path.home() / ".steam" / "steam",
-    Path.home() / ".steam" / "root",
-    Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
-]
-
 GITHUB_USER_AGENT = f"doomdeck/{SCRIPT_VERSION}"
 
 
 def now_stamp() -> str:
-    return _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 
 
 def configure_logging(dirs: Dirs, verbose: bool, dry_run: bool) -> logging.Logger:
@@ -196,186 +194,6 @@ def print_plan(title: str, actions: Iterable[str]) -> None:
     print()
 
 
-def detect_steamos() -> tuple[bool, str]:
-    if platform.system() != "Linux":
-        return False, f"Not Linux: {platform.system()}"
-    os_release = Path("/etc/os-release")
-    text = os_release.read_text(encoding="utf-8", errors="ignore") if os_release.exists() else ""
-    markers = ["steam", "steamos", "valve"]
-    if any(marker in text.lower() for marker in markers):
-        return True, "/etc/os-release looks like SteamOS or Valve Linux"
-    if Path("/run/host/usr/bin/steamos-session-select").exists() or Path("/usr/bin/steamos-session-select").exists():
-        return True, "SteamOS session selector found"
-    return False, "Linux detected, but SteamOS markers were not found"
-
-
-def find_steam_root(explicit: Optional[str]) -> Optional[Path]:
-    if explicit:
-        path = expand_path(explicit)
-        return path if path.exists() else None
-    for candidate in STEAM_ROOT_CANDIDATES:
-        try:
-            resolved = candidate.expanduser().resolve()
-        except FileNotFoundError:
-            resolved = candidate.expanduser()
-        if (resolved / "steamapps").exists() or (resolved / "userdata").exists():
-            return resolved
-    return None
-
-
-def parse_library_folders(steam_root: Path, logger: logging.Logger) -> list[Path]:
-    candidates = [
-        steam_root / "steamapps" / "libraryfolders.vdf",
-        steam_root / "config" / "libraryfolders.vdf",
-    ]
-    folders: list[Path] = [steam_root]
-    path_pattern = re.compile(r'"path"\s+"([^"]+)"')
-    for file_path in candidates:
-        if not file_path.exists():
-            continue
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
-        for raw in path_pattern.findall(text):
-            p = Path(raw.replace("\\\\", "\\")).expanduser()
-            if p.exists():
-                folders.append(p.resolve())
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for folder in folders:
-        key = str(folder)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(folder)
-    logger.debug("Steam library folders: %s", deduped)
-    return deduped
-
-
-def parse_installdir_from_manifest(manifest: Path) -> Optional[str]:
-    text = manifest.read_text(encoding="utf-8", errors="ignore")
-    match = re.search(r'"installdir"\s+"([^"]+)"', text)
-    return match.group(1) if match else None
-
-
-def find_steam_app_install_dir(library_folders: list[Path], appid: str, logger: logging.Logger) -> Optional[Path]:
-    for library in library_folders:
-        steamapps = library / "steamapps"
-        manifest = steamapps / f"appmanifest_{appid}.acf"
-        if not manifest.exists():
-            continue
-        install_dir_name = parse_installdir_from_manifest(manifest)
-        if install_dir_name:
-            install_dir = steamapps / "common" / install_dir_name
-            if install_dir.exists():
-                logger.info("Found Steam app %s at %s", appid, install_dir)
-                return install_dir.resolve()
-        # Fallback: app manifest exists but installdir was absent or moved.
-        common = steamapps / "common"
-        if common.exists():
-            for child in common.iterdir():
-                if child.is_dir() and list(child.rglob("*.wad")):
-                    logger.debug("Fallback candidate for app %s: %s", appid, child)
-    return None
-
-
-def find_steam_user_id(steam_root: Path, explicit: Optional[str], logger: logging.Logger) -> tuple[Optional[str], Optional[Path]]:
-    if explicit:
-        shortcuts = steam_root / "userdata" / explicit / "config" / "shortcuts.vdf"
-        return explicit, shortcuts
-    userdata = steam_root / "userdata"
-    if not userdata.exists():
-        return None, None
-    candidates = [p for p in userdata.iterdir() if p.is_dir() and p.name.isdigit()]
-    if not candidates:
-        return None, None
-
-    def score(path: Path) -> tuple[int, float]:
-        cfg = path / "config"
-        shortcuts = cfg / "shortcuts.vdf"
-        localconfig = cfg / "localconfig.vdf"
-        nonzero = 1 if path.name != "0" else 0
-        exists_score = (2 if shortcuts.exists() else 0) + (1 if localconfig.exists() else 0)
-        mtime = max(
-            [x.stat().st_mtime for x in [shortcuts, localconfig, cfg] if x.exists()],
-            default=0.0,
-        )
-        return (nonzero + exists_score, mtime)
-
-    chosen = sorted(candidates, key=score, reverse=True)[0]
-    logger.info("Selected Steam user ID %s", chosen.name)
-    return chosen.name, chosen / "config" / "shortcuts.vdf"
-
-
-def discover_steam(args: argparse.Namespace, logger: logging.Logger) -> SteamInfo:
-    steam_root = find_steam_root(args.steam_root)
-    if not steam_root:
-        return SteamInfo(None, None, None, [], None)
-    libraries = parse_library_folders(steam_root, logger)
-    app_install_dir = find_steam_app_install_dir(libraries, APPID_DOOM_PLUS_DOOM_II, logger)
-    user_id, shortcuts = find_steam_user_id(steam_root, args.steam_user_id, logger)
-    localconfig = shortcuts.parent / "localconfig.vdf" if shortcuts else None
-    return SteamInfo(steam_root, user_id, shortcuts, libraries, app_install_dir, localconfig)
-
-
-def copy_wads(
-    wads: dict[str, Path],
-    dest_dir: Path,
-    backups_dir: Path,
-    dry_run: bool,
-    logger: logging.Logger,
-    label: str,
-    overwrite_existing: bool = True,
-) -> None:
-    for name, src in wads.items():
-        dest = dest_dir / name.upper()
-        if dest.exists() and files_equal(src, dest):
-            logger.info("%s already copied: %s", label, dest)
-            continue
-        if dest.exists() and not overwrite_existing:
-            logger.warning("Preserving existing %s with same name; skipping copy from %s: %s", label, src, dest)
-            continue
-        if dest.exists():
-            backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
-        logger.info("Copy %s: %s -> %s", label, src, dest)
-        if not dry_run:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-
-
-def copy_iwads(iwads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
-    copy_wads(iwads, dirs.iwads, dirs.backups, dry_run, logger, "IWAD")
-
-
-def copy_addon_wads(wads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
-    copy_wads(wads, dirs.pwads, dirs.backups, dry_run, logger, "add-on WAD", overwrite_existing=False)
-
-
-def github_request_json(url: str) -> Any:
-    DownloadPolicy.for_hosts({"api.github.com"}).validate_url(url)
-    request = urllib.request.Request(url, headers={"User-Agent": GITHUB_USER_AGENT, "Accept": "application/vnd.github+json"})
-    # URL policy is validated before opening the request.
-    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-        return json.loads(response.read().decode("utf-8"))
-
-
-def select_release_asset(repo: str, prefer_legacy_appimage: bool, logger: logging.Logger) -> GitHubAsset:
-    release = validate_github_release_payload(
-        github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
-        repo,
-    )
-    selected = select_linux_appimage_release_asset(release, repo, prefer_legacy_appimage=prefer_legacy_appimage)
-    logger.info("Selected GitHub asset for %s: %s", repo, selected.name)
-    return selected
-
-
-def select_windows_release_asset(repo: str, logger: logging.Logger) -> GitHubAsset:
-    release = validate_github_release_payload(
-        github_request_json(f"https://api.github.com/repos/{repo}/releases/latest"),
-        repo,
-    )
-    selected = select_windows_zip_release_asset(release, repo)
-    logger.info("Selected Windows GitHub asset for %s: %s", repo, selected.name)
-    return selected
-
-
 def download_url(
     url: str,
     dest: Path,
@@ -423,13 +241,17 @@ def install_windows_app_from_github(
         asset_name = safe_download_name(explicit_url, f"{repo.split('/')[-1]}.zip")
         url = explicit_url
         expected_size = None
+        expected_sha256 = None
         allowed_hosts = None
     else:
-        asset = select_windows_release_asset(repo, logger)
+        asset = fetch_windows_release_asset(repo, logger, GITHUB_USER_AGENT)
+        if not asset.sha256:
+            raise DoomDeckError(f"GitHub release asset for {repo} did not include a SHA-256 digest: {asset.name}")
         asset_name = safe_download_name(asset.name, f"{repo.split('/')[-1]}.zip")
         url = asset.url
         expected_size = asset.size
-        allowed_hosts = {"github.com"}
+        expected_sha256 = asset.sha256
+        allowed_hosts = {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
     downloaded = download_url(
         url,
         dirs.downloads / asset_name,
@@ -438,6 +260,7 @@ def install_windows_app_from_github(
         force=args.force_download,
         allowed_hosts=allowed_hosts,
         expected_size=expected_size,
+        expected_sha256=expected_sha256,
     )
     if args.dry_run:
         return exe_path
@@ -477,7 +300,10 @@ def install_windows_app_archive(
 
 def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
     try:
-        release_payload = github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/releases/latest")
+        release_payload = request_github_json(
+            f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/releases/latest",
+            GITHUB_USER_AGENT,
+        )
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
             raise DoomDeckError(f"Could not read Project Brutality release metadata: {exc}") from exc
@@ -506,7 +332,7 @@ def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
         return value
 
     ranked = sorted(assets, key=score, reverse=True)
-    if ranked and score(ranked[0]) > 0:
+    if ranked and score(ranked[0]) > 0 and ranked[0].digest:
         chosen = ranked[0]
         logger.info("Selected Project Brutality release asset: %s", chosen.name)
         return GitHubAsset(
@@ -514,18 +340,29 @@ def select_project_brutality_download(logger: logging.Logger) -> GitHubAsset:
             url=chosen.browser_download_url,
             size=chosen.size,
             tag_name=tag_name,
+            sha256=chosen.digest.removeprefix("sha256:") if chosen.digest else None,
         )
 
-    zipball_url = release.zipball_url
-    if not zipball_url:
+    ref = release.label if release_payload else ""
+    if not ref:
         repo_meta = validate_github_repository_payload(
-            github_request_json(f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}"),
+            request_github_json(
+                f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}",
+                GITHUB_USER_AGENT,
+            ),
             PROJECT_BRUTALITY_REPO,
         )
-        default_branch = repo_meta.default_branch or "master"
-        tag_name = default_branch
-        zipball_url = f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/zipball/{default_branch}"
-    fallback_name = f"Project_Brutality-{safe_download_name(tag_name, 'latest')}.zip"
+        ref = repo_meta.default_branch or "master"
+        tag_name = ref
+    commit = validate_github_commit_payload(
+        request_github_json(
+            f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/commits/{urllib.parse.quote(ref, safe='')}",
+            GITHUB_USER_AGENT,
+        ),
+        PROJECT_BRUTALITY_REPO,
+    )
+    zipball_url = f"https://api.github.com/repos/{PROJECT_BRUTALITY_REPO}/zipball/{commit.sha}"
+    fallback_name = f"Project_Brutality-{safe_download_name(tag_name, 'latest')}-{commit.sha}.zip"
     logger.info("Using Project Brutality source zipball: %s", tag_name)
     return GitHubAsset(name=fallback_name, url=str(zipball_url), size=None, tag_name=tag_name)
 
@@ -569,6 +406,7 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         asset_name = safe_download_name(url, "Project_Brutality.zip")
         tag_name = "explicit-url"
         expected_size = None
+        expected_sha256 = None
         allowed_hosts = None
     else:
         asset = select_project_brutality_download(logger)
@@ -576,7 +414,13 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         asset_name = safe_download_name(asset.name, "Project_Brutality.zip")
         tag_name = asset.tag_name
         expected_size = asset.size
-        allowed_hosts = {"api.github.com", "github.com"}
+        expected_sha256 = asset.sha256
+        allowed_hosts = {
+            "api.github.com",
+            "github.com",
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+        }
     downloaded = download_url(
         url,
         dirs.downloads / asset_name,
@@ -585,6 +429,7 @@ def resolve_project_brutality(args: argparse.Namespace, dirs: Dirs, dry_run: boo
         force=args.force_download,
         allowed_hosts=allowed_hosts,
         expected_size=expected_size,
+        expected_sha256=expected_sha256,
     )
     return install_project_brutality_archive(
         downloaded,
@@ -686,7 +531,11 @@ def resolve_brutal_doom(args: argparse.Namespace, dirs: Dirs, dry_run: bool, log
         md5=selected.md5,
     )
     compare_keys = ["source_type", "source_channel", "source_page_url", "source_filename", "source_updated", "source_md5"]
-    already_current = canonical.exists() and metadata_matches(metadata_path, source.as_metadata(), compare_keys)
+    already_current = (
+        canonical.exists()
+        and metadata_matches(metadata_path, source.as_metadata(), compare_keys)
+        and installed_payload_matches(canonical, metadata_path)
+    )
     if already_current and not args.force_download:
         logger.info("Brutal Doom already current from ModDB: %s", canonical)
         return canonical
@@ -763,7 +612,7 @@ def install(args: argparse.Namespace) -> int:
     dirs = build_dirs(expand_path(args.root))
     logger = configure_logging(dirs, args.verbose, args.dry_run)
     steamos_ok, steamos_msg = detect_steamos()
-    steam = discover_steam(args, logger)
+    steam = discover_steam(SteamDiscoverySettings(args.steam_root, args.steam_user_id), logger)
     plan = build_install_plan(
         dirs=dirs,
         steam=steam,
@@ -914,7 +763,7 @@ def install_wads(args: argparse.Namespace) -> int:
 def validate(args: argparse.Namespace) -> int:
     dirs = build_dirs(expand_path(args.root))
     logger = configure_logging(dirs, args.verbose, args.dry_run)
-    steam = discover_steam(args, logger)
+    steam = discover_steam(SteamDiscoverySettings(args.steam_root, args.steam_user_id), logger)
     report = validate_internal(args, dirs, steam, logger, print_report=True)
     return 1 if validation_has_failures(report) else 0
 
@@ -994,18 +843,14 @@ def restore(args: argparse.Namespace) -> int:
     if not archive.exists():
         raise DoomDeckError(f"Backup archive does not exist: {archive}")
     replaced = dirs.root.parent / f"{dirs.root.name}.pre-restore-{now_stamp()}"
-    actions = [f"Extract {archive} under {dirs.root.parent}"]
+    staging = dirs.root.parent / f".{dirs.root.name}.restore-{now_stamp()}"
+    actions = [f"Extract and validate {archive} under staging path {staging}", f"Activate restored root at {dirs.root}"]
     if dirs.root.exists():
         actions.insert(0, f"Move existing {dirs.root} to {replaced}")
     print_plan("Planned restore actions", actions)
     if args.dry_run:
         return 0
-    with tarfile.open(archive, "r:gz") as tar:
-        validate_safe_tar(tar, dirs.root.parent, expected_root_name=dirs.root.name)
-    if dirs.root.exists():
-        shutil.move(str(dirs.root), str(replaced))
-    with tarfile.open(archive, "r:gz") as tar:
-        safe_extract_tar(tar, dirs.root.parent, expected_root_name=dirs.root.name)
+    restore_backup_archive(archive, dirs.root, replaced, staging, logger)
     logger.info("Restore completed from %s", archive)
     return 0
 
@@ -1055,6 +900,15 @@ def self_update(args: argparse.Namespace) -> int:
     logger = configure_console_logging(args.verbose)
     install_dir = resolve_self_update_install_dir(args.install_dir)
     archive_url = build_self_update_archive_url(args.repo_url, args.ref, args.archive_url)
+    if not args.archive_url:
+        commit = validate_github_commit_payload(
+            request_github_json(
+                build_github_commit_api_url(args.repo_url, args.ref),
+                GITHUB_USER_AGENT,
+            ),
+            args.repo_url,
+        )
+        archive_url = build_self_update_archive_url(args.repo_url, commit.sha)
     plan = build_self_update_plan(install_dir, archive_url)
     validate_self_update_source_dir(install_dir)
 

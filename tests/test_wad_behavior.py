@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from doomdeck.cli import copy_addon_wads
+from doomdeck.application.wads import copy_addon_wads
 from doomdeck.application.wads import find_wads_in_install, score_iwad_candidate
 from doomdeck.domain.paths import build_dirs
 from doomdeck.domain.wads import iwad_dest_name

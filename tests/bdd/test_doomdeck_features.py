@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import shlex
@@ -170,7 +169,7 @@ def steam_has_one_doomrunner_shortcut(bdd_context: dict[str, Any]) -> None:
 @then("Steam has a DoomDeck Steam Input profile for the Doom Runner shortcut")
 def steam_has_doomdeck_steam_input_profile(bdd_context: dict[str, Any]) -> None:
     steam = cli.discover_steam(
-        argparse.Namespace(steam_root=str(bdd_context["steam_root"]), steam_user_id="123"),
+        cli.SteamDiscoverySettings(str(bdd_context["steam_root"]), "123"),
         LOGGER,
     )
     profile_path = steam_input_profile_path(steam)

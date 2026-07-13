@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from doomdeck.domain.wads import IWAD_CANONICAL_NAMES, is_excluded_wad_name
+from doomdeck.domain.models import Dirs
+from doomdeck.infrastructure.files import backup_path, files_equal
 
 
 def score_iwad_candidate(path: Path) -> tuple[int, float]:
@@ -60,3 +63,36 @@ def find_wads_in_install(install_dir: Optional[Path], logger: logging.Logger) ->
         extras[name] = chosen.resolve()
         logger.info("Selected add-on WAD %s from %s", name, chosen)
     return best, extras
+
+
+def copy_wads(
+    wads: dict[str, Path],
+    dest_dir: Path,
+    backups_dir: Path,
+    dry_run: bool,
+    logger: logging.Logger,
+    label: str,
+    overwrite_existing: bool = True,
+) -> None:
+    for name, src in wads.items():
+        dest = dest_dir / name.upper()
+        if dest.exists() and files_equal(src, dest):
+            logger.info("%s already copied: %s", label, dest)
+            continue
+        if dest.exists() and not overwrite_existing:
+            logger.warning("Preserving existing %s with same name; skipping copy from %s: %s", label, src, dest)
+            continue
+        if dest.exists():
+            backup_path(dest, backups_dir, dry_run, logger, label=dest.name)
+        logger.info("Copy %s: %s -> %s", label, src, dest)
+        if not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+
+def copy_iwads(iwads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
+    copy_wads(iwads, dirs.iwads, dirs.backups, dry_run, logger, "IWAD")
+
+
+def copy_addon_wads(wads: dict[str, Path], dirs: Dirs, dry_run: bool, logger: logging.Logger) -> None:
+    copy_wads(wads, dirs.pwads, dirs.backups, dry_run, logger, "add-on WAD", overwrite_existing=False)
