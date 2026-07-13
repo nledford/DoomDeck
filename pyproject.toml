@@ -1,6 +1,6 @@
 [project]
 name = "doomdeck"
-version = "1.0.0"
+version = "1.0.1"
 description = "Steam Deck Doom modding setup automation for Doom Runner, UZDoom, Brutal Doom, and Project Brutality."
 readme = "README.md"
 requires-python = ">=3.10"

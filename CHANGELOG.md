@@ -6,6 +6,256 @@ DoomDeck uses Semantic Versioning and Conventional Commits. Release entries are 
 
 <!-- version list -->
 
+## v1.0.1 (2026-07-13)
+
+### Bug Fixes
+
+- Report invalid validation JSON shapes
+  ([`0b87112`](https://github.com/nledford/DoomDeck/commit/0b871123f477407710a8c490157432d0c9a59807))
+
+- **controls**: Serialize authoritative bindings
+  ([`4a5c75c`](https://github.com/nledford/DoomDeck/commit/4a5c75ce934bbdeb9dedc517b3df619b92deb070))
+
+- **doomrunner**: Make Steam launch config portable
+  ([`0508ab7`](https://github.com/nledford/DoomDeck/commit/0508ab794fc1a8772265e259930b491f52185b4a))
+
+- **downloads**: Bound oversized responses
+  ([`efb924d`](https://github.com/nledford/DoomDeck/commit/efb924d8210dfe73eb248132ceca3ffc15fc7409))
+
+- **downloads**: Verify GitHub artifact identity
+  ([`083d74b`](https://github.com/nledford/DoomDeck/commit/083d74b8de1dc5eb83d4c37bb7a7b0946c87230a))
+
+- **files**: Avoid backup name collisions
+  ([`51761b1`](https://github.com/nledford/DoomDeck/commit/51761b10c8ed35857efd06ac8d029768a3319ccc))
+
+- **github**: Avoid pydantic runtime import
+  ([`221962b`](https://github.com/nledford/DoomDeck/commit/221962b8bd2bde159b574f8754e81a407c1c3e1e))
+
+- **installer**: Install runtime dependencies
+  ([`554577e`](https://github.com/nledford/DoomDeck/commit/554577edd014e749285e6b50356886a8ce35e8a3))
+
+- **installer**: Reject unsafe source archives
+  ([`ee83700`](https://github.com/nledford/DoomDeck/commit/ee837003fd4dc971483b1b26fcea81026ea27617))
+
+- **mods**: Verify managed payloads on rerun
+  ([`78c0122`](https://github.com/nledford/DoomDeck/commit/78c0122c3d05ebc581fd81fa877377a66ab6569c))
+
+- **presets**: Omit missing mod presets
+  ([`52502f9`](https://github.com/nledford/DoomDeck/commit/52502f91ded3b3137beac3a7cac015a745fb5e59))
+
+- **restore**: Reject unexpected backup roots
+  ([`5aa49f7`](https://github.com/nledford/DoomDeck/commit/5aa49f7fff56c3c4597f9960440f773e3349f7aa))
+
+- **restore**: Reject unsafe backup members
+  ([`50be11d`](https://github.com/nledford/DoomDeck/commit/50be11ddc5eb2ece20b8d2a0071badcc68a44418))
+
+- **wads**: Preserve custom PWADs on reinstall
+  ([`7a3b90b`](https://github.com/nledford/DoomDeck/commit/7a3b90b38d1f8140beeaefcceea7c20f9bf808aa))
+
+### Build System
+
+- Add lint and type checks
+  ([`24f6d54`](https://github.com/nledford/DoomDeck/commit/24f6d543c8ef981a26fcab1d71254c5e896d11e6))
+
+- Add quality tooling dependencies
+  ([`ff25316`](https://github.com/nledford/DoomDeck/commit/ff253166e969009042e24cb17e0fe90a26a44b8e))
+
+- Enforce complexity checks
+  ([`33d8162`](https://github.com/nledford/DoomDeck/commit/33d8162aa1070cfedaff2c879b9612fcef575612))
+
+- Harden release and runtime bootstrap
+  ([`89077e9`](https://github.com/nledford/DoomDeck/commit/89077e9d33eed0c07d6020c02d2124b8d6f0c2fa))
+
+- Lock basedpyright dependency
+  ([`7933e66`](https://github.com/nledford/DoomDeck/commit/7933e663ca994600eb9a6067bdf6118ebdd6c55c))
+
+- Lock black dependency
+  ([`f22b4b3`](https://github.com/nledford/DoomDeck/commit/f22b4b3b634262f704980e2f368ad706a5c350e1))
+
+### Chores
+
+- Add local semantic release checks
+  ([`9bcc021`](https://github.com/nledford/DoomDeck/commit/9bcc0210b2cdf15304563919f91391540a615f2f))
+
+- Add quality analysis workflows
+  ([`c592858`](https://github.com/nledford/DoomDeck/commit/c592858ffc9556875264e33d77692a16557976e0))
+
+- Configure changelog generation
+  ([`7af4f0d`](https://github.com/nledford/DoomDeck/commit/7af4f0df803a9f254ec0668e9e6bc954309d9af5))
+
+- Ignore CortexKit runtime state
+  ([`4a27219`](https://github.com/nledford/DoomDeck/commit/4a27219914924a69d4e66a646ed1f5b63616651a))
+
+- Ignore local workspace state
+  ([`1525049`](https://github.com/nledford/DoomDeck/commit/1525049d47894320865fdf78ba1301a1ffec0b38))
+
+- Ignore ruff cache
+  ([`da8d179`](https://github.com/nledford/DoomDeck/commit/da8d179e4372bd486d0939c60034e8cafe2f178e))
+
+- Sync release and tooling docs
+  ([`15b3c9a`](https://github.com/nledford/DoomDeck/commit/15b3c9a8fccfb84768b6c55daf4219b26004a6b2))
+
+### Continuous Integration
+
+- Add GitHub release workflow
+  ([`2e005ec`](https://github.com/nledford/DoomDeck/commit/2e005ec8037377fcc035db433b6f44a134457440))
+
+- Test supported Python versions
+  ([`7d499fa`](https://github.com/nledford/DoomDeck/commit/7d499fa04e82f20b066cda0c5b73da8c48d645a8))
+
+### Documentation
+
+- Add contributing guide
+  ([`9fc48e2`](https://github.com/nledford/DoomDeck/commit/9fc48e2b887351c590b6880d7af42ac2c2a97562))
+
+- Clarify DoomRunner config and controls
+  ([`aabd421`](https://github.com/nledford/DoomDeck/commit/aabd421a85fde29509005c5eeeb30dbf71d0f1c1))
+
+- Clarify install script behavior
+  ([`9650cf8`](https://github.com/nledford/DoomDeck/commit/9650cf8064877dbec7cfb887f5a911aa5e72f72e))
+
+- Clarify optional mod presets
+  ([`c13e1c8`](https://github.com/nledford/DoomDeck/commit/c13e1c8b97bb318386ee57057561215d2df27a54))
+
+- Describe Steam Input layout
+  ([`6141c58`](https://github.com/nledford/DoomDeck/commit/6141c58c4157f56427ddaf7602ad40802e91f139))
+
+- Document automatic content groups
+  ([`8d6df3f`](https://github.com/nledford/DoomDeck/commit/8d6df3ff4df1dd6a4b803c60eeecb4643eece3df))
+
+- Document home-relative Doom root
+  ([`2cc774f`](https://github.com/nledford/DoomDeck/commit/2cc774f544cd89bd912d6ca45a7670b4867609ec))
+
+- Document PWAD display names
+  ([`1c84da0`](https://github.com/nledford/DoomDeck/commit/1c84da0595f35a91edf352dd40709e74eb73666f))
+
+- Document safety boundaries
+  ([`0c013d8`](https://github.com/nledford/DoomDeck/commit/0c013d82722dc5fea887e1013f916f08a823aad1))
+
+- Document single Doom Runner shortcut workflow
+  ([`7f90670`](https://github.com/nledford/DoomDeck/commit/7f906701dd1d3494a5945e9834bebaf13bc1bc07))
+
+- Document source installer venv
+  ([`007e2ef`](https://github.com/nledford/DoomDeck/commit/007e2ef248bf81a34b64291e97f259d1964fa461))
+
+- Include Project Brutality controls
+  ([`88c303c`](https://github.com/nledford/DoomDeck/commit/88c303cba4ff563cecc8b5b83c087dd2849ca2b0))
+
+- **cli**: Document self-update command
+  ([`e0301ce`](https://github.com/nledford/DoomDeck/commit/e0301ce1bef2b2be8d8ddeaa82098b126cf90f39))
+
+- **proton**: Document Windows Proton workflow
+  ([`31df3fe`](https://github.com/nledford/DoomDeck/commit/31df3fece7c1ca176971d1f0cca4a9e8fa7762da))
+
+### Features
+
+- Install ModDB WAD archives
+  ([`d32c570`](https://github.com/nledford/DoomDeck/commit/d32c570be6b7cabf58aa1dec5b4799aa47f7c288))
+
+- Validate GitHub API payloads
+  ([`031d6d4`](https://github.com/nledford/DoomDeck/commit/031d6d474e66a03d4542c77040a6deb3a6d7d601))
+
+- **cli**: Add self-update command
+  ([`55cbc90`](https://github.com/nledford/DoomDeck/commit/55cbc90d5ee6f3131dbbdbee5ef220c2ba3b6c5d))
+
+- **cli**: Install ModDB WADs with dedicated command
+  ([`23a99a5`](https://github.com/nledford/DoomDeck/commit/23a99a52f774482e7046d8418a9b48b9d058d0c0))
+
+- **content**: Infer installed content groups
+  ([`cd692df`](https://github.com/nledford/DoomDeck/commit/cd692df0364dfddcdf98e2d733389f27fe1426fe))
+
+- **controls**: Add Steam Deck input layout
+  ([`2977ece`](https://github.com/nledford/DoomDeck/commit/2977ece06208c50eb2ffb99e59876b7cdb8b3e9e))
+
+- **doomrunner**: Publish content group metadata
+  ([`ff37134`](https://github.com/nledford/DoomDeck/commit/ff371344e2a259e0e738788575f58bb27ba337fa))
+
+- **input**: Bind quick save and load keys
+  ([`38f37da`](https://github.com/nledford/DoomDeck/commit/38f37dacec4869e857c6d0dde84369e6a1cc6455))
+
+- **proton**: Run Windows Doom tools via Proton
+  ([`3a7f60b`](https://github.com/nledford/DoomDeck/commit/3a7f60b50073be0aa9fd9f189b267662daa93de0))
+
+- **restore**: Add atomic activation workflow
+  ([`6ebcb16`](https://github.com/nledford/DoomDeck/commit/6ebcb16a843aac757d5afe0ad3295ab6bcdb6fd9))
+
+- **steam**: Enforce single Doom Runner shortcut
+  ([`5318eda`](https://github.com/nledford/DoomDeck/commit/5318edaba90761ce8c2ba5e28f1c4f456a317f5d))
+
+- **wads**: Add friendly PWAD display names
+  ([`ea418ac`](https://github.com/nledford/DoomDeck/commit/ea418ac6ab8b5ea0bd7d17f6e1437f5fe6fd95ae))
+
+### Refactoring
+
+- Centralize backup archive creation
+  ([`2c2a63b`](https://github.com/nledford/DoomDeck/commit/2c2a63bb7bcdd472f198436621050f1b82063f2e))
+
+- Centralize Steam shortcut upserts
+  ([`5eaf96d`](https://github.com/nledford/DoomDeck/commit/5eaf96d4c15fe1c946437c6d233d3b6b01ff4af3))
+
+- Isolate validation reporting
+  ([`e673e42`](https://github.com/nledford/DoomDeck/commit/e673e4261a5dec2e22888c203bd1b86c77e141ff))
+
+- Model validation results
+  ([`497923f`](https://github.com/nledford/DoomDeck/commit/497923f3f85d3dcb1c1037bb8e068d9d35b07c60))
+
+- Split ModDB WAD installation
+  ([`ba21aa4`](https://github.com/nledford/DoomDeck/commit/ba21aa46e029cc04b995acf8c721804ff6c3a577))
+
+- Split validation checks
+  ([`263f79b`](https://github.com/nledford/DoomDeck/commit/263f79bfb3cfb63e526aec0b8dca66896e51c29d))
+
+- **cli**: Extract moddb install boundaries
+  ([`2473a57`](https://github.com/nledford/DoomDeck/commit/2473a57ccee168704d2984a42ccda2f39e2349bb))
+
+- **cli**: Extract setup application services
+  ([`dbf3d79`](https://github.com/nledford/DoomDeck/commit/dbf3d7991b1ed6c5e291a235fb0a42222c8e21d8))
+
+- **domain**: Extract download and mod boundaries
+  ([`9e3d8fb`](https://github.com/nledford/DoomDeck/commit/9e3d8fb6401a7c2872b5da86e07a3ae813a740c1))
+
+- **doomrunner**: Model generated options
+  ([`75708e1`](https://github.com/nledford/DoomDeck/commit/75708e1af651ec8e7ed524b6283bb8b68ac2e7e6))
+
+- **github**: Isolate release asset selection
+  ([`c61cba9`](https://github.com/nledford/DoomDeck/commit/c61cba97f371c4b7770beaf6dcc4d5b2cfc47bb4))
+
+- **github**: Require pydantic schemas
+  ([`e4e8523`](https://github.com/nledford/DoomDeck/commit/e4e85236b1f32ec4393a52a1eb9bb21a7b0b6c74))
+
+- **install**: Model install plan actions
+  ([`f036d58`](https://github.com/nledford/DoomDeck/commit/f036d580b6b431804ce35e5160b1266d34033d3b))
+
+- **moddb**: Name brutal doom selection policy
+  ([`ccaa369`](https://github.com/nledford/DoomDeck/commit/ccaa3699c58a5f1dcadb153e34c7c7464204c15e))
+
+- **mods**: Extract managed mod installation
+  ([`ab5c42d`](https://github.com/nledford/DoomDeck/commit/ab5c42da71b781148bf9580216b84b562b620487))
+
+- **presets**: Add typed manifest contract
+  ([`c96044f`](https://github.com/nledford/DoomDeck/commit/c96044f22f8196dab78f962812a583998404bf5f))
+
+- **schemas**: Validate boundaries with pydantic
+  ([`e8cbbe4`](https://github.com/nledford/DoomDeck/commit/e8cbbe4045b9dfb102d88bf1c19dda0e46037c91))
+
+- **validation**: Extract installation validator
+  ([`37bba8b`](https://github.com/nledford/DoomDeck/commit/37bba8b937be94db09a7332881d885a798154303))
+
+- **validation**: Inspect DoomRunner options separately
+  ([`6a1ba35`](https://github.com/nledford/DoomDeck/commit/6a1ba35ef61604f7066843c1819d702cbadecbb7))
+
+### Testing
+
+- Add pytest-bdd dependency
+  ([`69f28c3`](https://github.com/nledford/DoomDeck/commit/69f28c35c3d385810ac48ba08acb96e7fe30907e))
+
+- Characterize generated setup validation
+  ([`c51cb97`](https://github.com/nledford/DoomDeck/commit/c51cb97a7bcf80f14b0b1ffe9e699181f9468123))
+
+- **bdd**: Add DoomDeck acceptance specs
+  ([`4608ed5`](https://github.com/nledford/DoomDeck/commit/4608ed5d322eb83d729276b0ef3d7cfb367d7d37))
+
+
 ## v1.0.0 (2026-06-09)
 
 ### Highlights
