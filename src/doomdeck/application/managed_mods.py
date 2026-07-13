@@ -32,6 +32,45 @@ def metadata_matches(metadata_path: Path, expected: dict[str, str], keys: Iterab
     return all(str(metadata.get(key, "")) == str(expected.get(key, "")) for key in keys)
 
 
+def installed_payload_matches(installed_path: Path, metadata_path: Path) -> bool:
+    if not installed_path.is_file() or not metadata_path.is_file():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        expected_sha = metadata.get("installed_sha256") if isinstance(metadata, dict) else None
+        return isinstance(expected_sha, str) and bool(expected_sha) and sha256_file(installed_path) == expected_sha
+    except (json.JSONDecodeError, OSError, UnicodeError):
+        return False
+
+
+def _reuse_current_payload(
+    dest: Path,
+    metadata_path: Path,
+    source_sha: str,
+    source: SourceMetadata,
+    logger: logging.Logger,
+    label: str,
+) -> bool:
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError):
+        return False
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("source_sha256") != source_sha
+        or not installed_payload_matches(dest, metadata_path)
+    ):
+        return False
+
+    source_metadata = source.as_metadata() if isinstance(source, ModSource) else dict(source)
+    if any(str(metadata.get(key, "")) != str(value) for key, value in source_metadata.items()):
+        metadata.update(source_metadata)
+        atomic_write_text(metadata_path, json.dumps(metadata, indent=2) + "\n", False, logger)
+        logger.info("Refresh %s source metadata: %s", label, metadata_path)
+    logger.info("%s already current: %s", label, dest)
+    return True
+
+
 def install_project_brutality_archive(
     src: Path,
     dest: Path,
@@ -45,14 +84,13 @@ def install_project_brutality_archive(
     if not src.exists() and not dry_run:
         raise DoomDeckError(f"Project Brutality download is missing: {src}")
     source_sha = sha256_file(src) if src.exists() else ""
-    if dest.exists() and metadata_path.exists() and not force:
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            metadata = {}
-        if metadata.get("source_sha256") == source_sha:
-            logger.info("Project Brutality already current: %s", dest)
-            return dest
+    if (
+        dest.exists()
+        and metadata_path.exists()
+        and not force
+        and _reuse_current_payload(dest, metadata_path, source_sha, source, logger, "Project Brutality")
+    ):
+        return dest
 
     logger.info("Install Project Brutality archive: %s -> %s", src, dest)
     if dry_run:
@@ -69,6 +107,7 @@ def install_project_brutality_archive(
     metadata = InstalledModMetadata(
         mod=PROJECT_BRUTALITY_MOD,
         installed=dest,
+        installed_sha256=sha256_file(dest),
         source_sha256=source_sha,
         source=source,
     ).as_json_object()
@@ -117,14 +156,13 @@ def install_brutal_doom_archive(
     if not src.exists() and not dry_run:
         raise DoomDeckError(f"Brutal Doom download is missing: {src}")
     source_sha = sha256_file(src) if src.exists() else ""
-    if dest.exists() and metadata_path.exists() and not force:
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            metadata = {}
-        if metadata.get("source_sha256") == source_sha:
-            logger.info("Brutal Doom already current: %s", dest)
-            return dest
+    if (
+        dest.exists()
+        and metadata_path.exists()
+        and not force
+        and _reuse_current_payload(dest, metadata_path, source_sha, source, logger, "Brutal Doom")
+    ):
+        return dest
 
     logger.info("Install Brutal Doom archive: %s -> %s", src, dest)
     if dry_run:

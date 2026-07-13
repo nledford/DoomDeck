@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import urllib.error
 import zipfile
+from unittest.mock import patch
 
 import pytest
 
@@ -9,8 +11,11 @@ from doomdeck.application.moddb_wads import install_moddb_wad_archive
 from doomdeck.domain.models import DoomDeckError
 from doomdeck.infrastructure.moddb import (
     BrutalDoomSelectionPolicy,
+    BRUTAL_DOOM_DOWNLOADS_URL,
+    BRUTAL_DOOM_MODDB_URL,
     ModDBPageCandidate,
     extract_moddb_download_link,
+    select_brutal_doom_download,
 )
 
 
@@ -93,3 +98,43 @@ def test_brutal_doom_selection_policy_prefers_stable_full_versions_over_tests() 
     )
 
     assert stable_score > beta_score
+
+
+def test_brutal_doom_selection_falls_back_and_resolves_mirror_from_html_fixtures() -> None:
+    candidate_url = "https://www.moddb.com/mods/brutal-doom/downloads/brutal-doom-v22"
+    start_url = "https://www.moddb.com/downloads/start/123"
+    mirror_url = "https://www.moddb.com/downloads/mirror/456"
+    pages = {
+        BRUTAL_DOOM_DOWNLOADS_URL: (
+            '<a href="/mods/brutal-doom/downloads/brutal-doom-v22">'
+            "Brutal Doom v22 Full Version</a>"
+        ),
+        candidate_url: (
+            "<div>Filename:</div><div>brutal-doom-v22.zip</div>"
+            "<div>Updated:</div><div>2026-07-01</div>"
+            "<div>MD5 Hash:</div><div>abcd1234</div>"
+            '<a href="/downloads/start/123">Download now</a>'
+        ),
+        start_url: "<p>Select a mirror</p>",
+        f"{start_url}/all": '<a href="/downloads/mirror/456">Mirror</a>',
+    }
+
+    def fetch(url, _logger, *, user_agent):
+        assert user_agent == "test-agent"
+        if url == BRUTAL_DOOM_MODDB_URL:
+            raise urllib.error.URLError("primary unavailable")
+        return pages[url]
+
+    with patch("doomdeck.infrastructure.moddb.fetch_text_url", side_effect=fetch):
+        selected = select_brutal_doom_download(
+            "stable",
+            logging.getLogger("test"),
+            user_agent="test-agent",
+        )
+
+    assert selected.title == "Brutal Doom v22 Full Version"
+    assert selected.page_url == candidate_url
+    assert selected.filename == "brutal-doom-v22.zip"
+    assert selected.download_url == mirror_url
+    assert selected.updated == "2026-07-01"
+    assert selected.md5 == "abcd1234"
